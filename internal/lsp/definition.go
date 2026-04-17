@@ -121,6 +121,10 @@ func (v *defVisitor) StmtClassMethod(n *ast.StmtClassMethod) {
 }
 
 // — Flow 1: Service-container lookup —
+//
+// All four handlers below resolve a class name under the cursor to its FQN and
+// delegate to appendContainerLocations. They are no-ops when the FQN has no
+// container binding, so they are safe to fire on any class reference.
 
 // ExprClassConstFetch handles `X::class` when cursor is on the class name.
 func (v *defVisitor) ExprClassConstFetch(n *ast.ExprClassConstFetch) {
@@ -128,6 +132,36 @@ func (v *defVisitor) ExprClassConstFetch(n *ast.ExprClassConstFetch) {
 	if !ok || string(constID.Value) != "class" {
 		return
 	}
+	classPos := n.Class.GetPosition()
+	if classPos == nil || v.offset < classPos.StartPos || v.offset >= classPos.EndPos {
+		return
+	}
+	fqn := v.fc.Resolve(phputil.NameToString(n.Class))
+	v.appendContainerLocations(fqn)
+}
+
+// ExprNew handles `new ClassName(...)` when cursor is on the class name.
+func (v *defVisitor) ExprNew(n *ast.ExprNew) {
+	classPos := n.Class.GetPosition()
+	if classPos == nil || v.offset < classPos.StartPos || v.offset >= classPos.EndPos {
+		return
+	}
+	fqn := v.fc.Resolve(phputil.NameToString(n.Class))
+	v.appendContainerLocations(fqn)
+}
+
+// ExprStaticCall handles `ClassName::method(...)` when cursor is on the class name.
+func (v *defVisitor) ExprStaticCall(n *ast.ExprStaticCall) {
+	classPos := n.Class.GetPosition()
+	if classPos == nil || v.offset < classPos.StartPos || v.offset >= classPos.EndPos {
+		return
+	}
+	fqn := v.fc.Resolve(phputil.NameToString(n.Class))
+	v.appendContainerLocations(fqn)
+}
+
+// ExprInstanceOf handles `$x instanceof ClassName` when cursor is on the class name.
+func (v *defVisitor) ExprInstanceOf(n *ast.ExprInstanceOf) {
 	classPos := n.Class.GetPosition()
 	if classPos == nil || v.offset < classPos.StartPos || v.offset >= classPos.EndPos {
 		return

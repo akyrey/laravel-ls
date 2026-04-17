@@ -39,5 +39,7 @@ func buildHandler(s *lsp.Server) *protocol.Handler {
 
 		TextDocumentDefinition: s.Definition,
 		TextDocumentReferences: s.References,
+		TextDocumentHover:      s.Hover,
+		TextDocumentCompletion: s.Completion,
 	}
 }

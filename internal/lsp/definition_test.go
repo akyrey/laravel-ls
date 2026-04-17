@@ -44,6 +44,70 @@ func TestDefinition_ContainerLookup(t *testing.T) {
 	}
 }
 
+func TestDefinition_ContainerFromNew(t *testing.T) {
+	bindingsRoot := filepath.Join("..", "..", "testdata", "bindings")
+	bindings, err := container.Walk(bindingsRoot, []string{"."})
+	if err != nil {
+		t.Fatalf("container.Walk: %v", err)
+	}
+	models := eloquent.NewModelIndex()
+
+	ctrlPath := filepath.Join(bindingsRoot, "PaymentController.php")
+	src, err := os.ReadFile(ctrlPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	// Cursor on "PaymentGateway" in "new PaymentGateway()"
+	needle := []byte("new PaymentGateway()")
+	idx := bytes.Index(src, needle)
+	if idx < 0 {
+		t.Fatal("new PaymentGateway() not found in fixture")
+	}
+	offset := idx + len("new ") // on 'P'
+
+	locs := findDefinition(src, ctrlPath, offset, bindings, models)
+	if len(locs) == 0 {
+		t.Fatal("expected container location via new, got none")
+	}
+	got := filepath.Base(URIToPath(locs[0].URI))
+	if got != "StripeGateway.php" {
+		t.Errorf("want StripeGateway.php, got %s", got)
+	}
+}
+
+func TestDefinition_ContainerFromInstanceOf(t *testing.T) {
+	bindingsRoot := filepath.Join("..", "..", "testdata", "bindings")
+	bindings, err := container.Walk(bindingsRoot, []string{"."})
+	if err != nil {
+		t.Fatalf("container.Walk: %v", err)
+	}
+	models := eloquent.NewModelIndex()
+
+	ctrlPath := filepath.Join(bindingsRoot, "PaymentController.php")
+	src, err := os.ReadFile(ctrlPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	// Cursor on "PaymentGateway" in "$x instanceof PaymentGateway"
+	needle := []byte("instanceof PaymentGateway")
+	idx := bytes.Index(src, needle)
+	if idx < 0 {
+		t.Fatal("instanceof PaymentGateway not found in fixture")
+	}
+	offset := idx + len("instanceof ") // on 'P'
+
+	locs := findDefinition(src, ctrlPath, offset, bindings, models)
+	if len(locs) == 0 {
+		t.Fatal("expected container location via instanceof, got none")
+	}
+	got := filepath.Base(URIToPath(locs[0].URI))
+	if got != "StripeGateway.php" {
+		t.Errorf("want StripeGateway.php, got %s", got)
+	}
+}
+
 func TestDefinition_EloquentPropertyAccess(t *testing.T) {
 	modelsRoot := filepath.Join("..", "..", "testdata", "models")
 	bindings := container.NewBindingIndex()
