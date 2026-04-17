@@ -176,10 +176,31 @@ sign included), not `"this"`. All variable name comparisons must include `$`.
 - References scan covers `app/` and `routes/` only (configurable via `referenceScanDirs`).
 - Chained access resolves through one Relationship hop only (not `$a->b->c->d`).
 
+12. **`textDocument/rename`** — Eloquent property rename across files. Reference
+    sites (`$model->propName`) and method-based declaration sites (modern/legacy
+    accessors) are renamed. Array-based declarations (`$fillable`, `$casts`, etc.)
+    are not renamed automatically (their stored location points to the whole
+    property list, not the individual string literal; update them manually).
+    Container abstract rename is out of scope.
+
+13. **`textDocument/prepareRename`** — validates the cursor is on a renameable
+    Eloquent property and returns the exact token range. Returns nil for
+    non-Eloquent symbols so editors correctly disable the rename action.
+
+14. **`textDocument/publishDiagnostics`** — pushed on `DidOpen`/`DidChange`.
+    Emits `Warning` for any `$model->undefinedProp` access on a model whose
+    class is indexed. Cleared on `DidClose`. Does not fire for variables whose
+    type cannot be resolved (avoids false positives).
+
+**VKCOM parser EndPos convention**: `EndPos` is exclusive (one past the last
+byte), matching LSP's exclusive range end. `toLSPRange` uses it directly
+without adding 1.
+
 ## What is not yet implemented
 
 - Incremental reindex on file save (full reindex triggered, not incremental)
-- `textDocument/rename` — symbol rename across files
+- `textDocument/rename` for container abstracts (requires full PHP class rename)
+- Diagnostics for renamed properties (stale after rename until next reindex)
 
 ## Dependencies
 

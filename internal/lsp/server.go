@@ -65,6 +65,9 @@ func (s *Server) Initialize(_ *glsp.Context, p *protocol.InitializeParams) (any,
 			DefinitionProvider: true,
 			ReferencesProvider: true,
 			HoverProvider:      true,
+			RenameProvider: &protocol.RenameOptions{
+				PrepareProvider: boolPtr(true),
+			},
 			CompletionProvider: &protocol.CompletionOptions{
 				TriggerCharacters: triggerChars,
 			},
@@ -95,29 +98,47 @@ func (s *Server) Initialized(_ *glsp.Context, _ *protocol.InitializedParams) err
 	return nil
 }
 
-// DidOpen caches the newly opened document.
-func (s *Server) DidOpen(_ *glsp.Context, p *protocol.DidOpenTextDocumentParams) error {
-	s.docs.Set(p.TextDocument.URI, []byte(p.TextDocument.Text))
+// DidOpen caches the newly opened document and pushes diagnostics.
+func (s *Server) DidOpen(ctx *glsp.Context, p *protocol.DidOpenTextDocumentParams) error {
+	src := []byte(p.TextDocument.Text)
+	s.docs.Set(p.TextDocument.URI, src)
+	s.mu.RLock()
+	models := s.models
+	s.mu.RUnlock()
+	path := URIToPath(p.TextDocument.URI)
+	publishDiagnostics(ctx, p.TextDocument.URI, src, path, models)
 	return nil
 }
 
-// DidChange updates the cached document. Full sync: uses the first change entry.
-func (s *Server) DidChange(_ *glsp.Context, p *protocol.DidChangeTextDocumentParams) error {
+// DidChange updates the cached document and pushes diagnostics. Full sync: uses first change.
+func (s *Server) DidChange(ctx *glsp.Context, p *protocol.DidChangeTextDocumentParams) error {
 	if len(p.ContentChanges) == 0 {
 		return nil
 	}
+	var src []byte
 	switch c := p.ContentChanges[0].(type) {
 	case protocol.TextDocumentContentChangeEventWhole:
-		s.docs.Set(p.TextDocument.URI, []byte(c.Text))
+		src = []byte(c.Text)
 	case protocol.TextDocumentContentChangeEvent:
-		s.docs.Set(p.TextDocument.URI, []byte(c.Text))
+		src = []byte(c.Text)
 	}
+	if src == nil {
+		return nil
+	}
+	s.docs.Set(p.TextDocument.URI, src)
+	s.mu.RLock()
+	models := s.models
+	s.mu.RUnlock()
+	path := URIToPath(p.TextDocument.URI)
+	publishDiagnostics(ctx, p.TextDocument.URI, src, path, models)
 	return nil
 }
 
-// DidClose removes the document from the cache.
-func (s *Server) DidClose(_ *glsp.Context, p *protocol.DidCloseTextDocumentParams) error {
+// DidClose removes the document from the cache and clears its diagnostics.
+func (s *Server) DidClose(ctx *glsp.Context, p *protocol.DidCloseTextDocumentParams) error {
 	s.docs.Delete(p.TextDocument.URI)
+	// Clear diagnostics so they don't linger after the file is closed.
+	publishDiagnostics(ctx, p.TextDocument.URI, nil, "", nil)
 	return nil
 }
 

@@ -41,5 +41,7 @@ func buildHandler(s *lsp.Server) *protocol.Handler {
 		TextDocumentReferences: s.References,
 		TextDocumentHover:      s.Hover,
 		TextDocumentCompletion: s.Completion,
+		TextDocumentRename:        s.Rename,
+		TextDocumentPrepareRename: s.PrepareRename,
 	}
 }

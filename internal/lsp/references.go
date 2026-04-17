@@ -81,9 +81,22 @@ func identifySymbol(
 	bindings *container.BindingIndex,
 	models *eloquent.ModelIndex,
 ) *refSymbol {
+	sym, _ := identifySymbolWithLoc(src, path, offset, bindings, models)
+	return sym
+}
+
+// identifySymbolWithLoc is like identifySymbol but also returns the exact token
+// location. tokenLoc is zero when sym is nil.
+func identifySymbolWithLoc(
+	src []byte,
+	path string,
+	offset int,
+	bindings *container.BindingIndex,
+	models *eloquent.ModelIndex,
+) (*refSymbol, phputil.Location) {
 	root, err := phpparse.Bytes(src, path)
 	if err != nil || root == nil {
-		return nil
+		return nil, phputil.Location{}
 	}
 	fc := &phputil.FileContext{Path: path, Uses: make(phputil.UseMap)}
 	sv := &symFinder{
@@ -93,7 +106,7 @@ func identifySymbol(
 		models:   models,
 	}
 	traverser.NewTraverser(sv).Traverse(root)
-	return sv.sym
+	return sv.sym, sv.tokenLoc
 }
 
 // symFinder is a single-pass visitor that identifies the symbol under the
@@ -109,7 +122,8 @@ type symFinder struct {
 	encMethod    *ast.StmtClassMethod
 	assignedVars map[string]phputil.FQN
 
-	sym *refSymbol
+	sym      *refSymbol
+	tokenLoc phputil.Location // exact range of the matched token
 }
 
 func (v *symFinder) StmtNamespace(n *ast.StmtNamespace) {
@@ -165,6 +179,7 @@ func (v *symFinder) StmtClassMethod(n *ast.StmtClassMethod) {
 		for _, a := range attrs {
 			if a.MethodName == methodName && a.Source == eloquent.SourceAST {
 				v.sym = &refSymbol{modelFQN: v.encClass, propName: exposed}
+				v.tokenLoc = phputil.FromPosition(v.fc.Path, namePos)
 				return
 			}
 		}
@@ -194,6 +209,7 @@ func (v *symFinder) ExprPropertyFetch(n *ast.ExprPropertyFetch) {
 		return
 	}
 	v.sym = &refSymbol{modelFQN: modelFQN, propName: propName}
+	v.tokenLoc = phputil.FromPosition(v.fc.Path, propPos)
 }
 
 func (v *symFinder) ExprClassConstFetch(n *ast.ExprClassConstFetch) {
@@ -208,6 +224,7 @@ func (v *symFinder) ExprClassConstFetch(n *ast.ExprClassConstFetch) {
 	fqn := v.fc.Resolve(phputil.NameToString(n.Class))
 	if len(v.bindings.Lookup(fqn)) > 0 {
 		v.sym = &refSymbol{abstractFQN: fqn}
+		v.tokenLoc = phputil.FromPosition(v.fc.Path, classPos)
 	}
 }
 

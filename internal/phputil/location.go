@@ -3,9 +3,10 @@ package phputil
 import "github.com/VKCOM/php-parser/pkg/position"
 
 // Location is a source position used as a jump target or source reference.
-// Line numbers are 1-indexed. StartByte / EndByte are file-level byte offsets
-// (the raw StartPos / EndPos from the VKCOM parser); they are converted to
-// UTF-16 columns when constructing LSP responses.
+// Line numbers are 1-indexed. StartByte is the byte offset of the first byte
+// of the node (inclusive). EndByte is one past the last byte (exclusive) —
+// matching VKCOM parser's EndPos convention and LSP's exclusive range end.
+// They are converted to UTF-16 columns when constructing LSP responses.
 type Location struct {
 	Path      string
 	StartLine int

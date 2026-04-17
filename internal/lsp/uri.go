@@ -10,6 +10,9 @@ import (
 	"github.com/akyrey/laravel-ls/internal/phputil"
 )
 
+// boolPtr returns a pointer to b. Used when a protocol field requires *bool.
+func boolPtr(b bool) *bool { return &b }
+
 // URIToPath converts a file:// URI to an absolute filesystem path.
 func URIToPath(uri protocol.DocumentUri) string {
 	s := string(uri)
@@ -46,6 +49,37 @@ func toLSPLocation(loc phputil.Location) protocol.Location {
 			Start: protocol.Position{Line: line, Character: col},
 			End:   protocol.Position{Line: line, Character: col},
 		},
+	}
+}
+
+// toLSPRange converts a phputil.Location to an LSP Range.
+// VKCOM parser EndPos is exclusive (one past the last byte), matching LSP's
+// exclusive end convention. Reads src from disk when src is nil; on failure
+// the range collapses to the start.
+func toLSPRange(loc phputil.Location, src []byte) protocol.Range {
+	if src == nil {
+		var err error
+		src, err = os.ReadFile(loc.Path)
+		if err != nil {
+			src = nil
+		}
+	}
+	startLine := uint32(0)
+	if loc.StartLine > 0 {
+		startLine = uint32(loc.StartLine - 1)
+	}
+	endLine := uint32(startLine)
+	if loc.EndLine > 0 {
+		endLine = uint32(loc.EndLine - 1)
+	}
+	var startCol, endCol uint32
+	if src != nil {
+		startCol = utf16ColFromFileOffset(src, loc.StartLine, loc.StartByte)
+		endCol = utf16ColFromFileOffset(src, loc.EndLine, loc.EndByte)
+	}
+	return protocol.Range{
+		Start: protocol.Position{Line: startLine, Character: startCol},
+		End:   protocol.Position{Line: endLine, Character: endCol},
 	}
 }
 
