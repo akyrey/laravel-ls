@@ -45,7 +45,7 @@ func (s *Server) References(_ *glsp.Context, p *protocol.ReferenceParams) ([]pro
 		return nil, nil
 	}
 
-	locs := scanReferences(root, referenceScanDirs, sym, s.docs)
+	locs := scanReferences(root, referenceScanDirs, sym, s.docs, models)
 
 	if p.Context.IncludeDeclaration {
 		locs = append(locs, declarationLocations(sym, bindings, models)...)
@@ -182,21 +182,7 @@ func (v *symFinder) ExprPropertyFetch(n *ast.ExprPropertyFetch) {
 	}
 	propName := string(prop.Value)
 
-	lhsVar, ok := n.Var.(*ast.ExprVariable)
-	if !ok {
-		return
-	}
-	lhsID, ok := lhsVar.Name.(*ast.Identifier)
-	if !ok {
-		return
-	}
-	varVal := string(lhsID.Value)
-	var modelFQN phputil.FQN
-	if varVal == "$this" || varVal == "this" {
-		modelFQN = v.encClass
-	} else {
-		modelFQN = resolveVarFQN(varVal, v.encMethod, v.assignedVars, v.fc)
-	}
+	modelFQN := resolveExprType(n.Var, v.encClass, v.encMethod, v.assignedVars, v.fc, v.models)
 	if modelFQN == "" {
 		return
 	}
@@ -229,7 +215,7 @@ func (v *symFinder) ExprClassConstFetch(n *ast.ExprClassConstFetch) {
 
 // scanReferences walks dirs (relative to root) and collects all locations
 // matching sym. Callers pass referenceScanDirs for production or "." for tests.
-func scanReferences(root string, dirs []string, sym *refSymbol, docs *DocumentStore) []protocol.Location {
+func scanReferences(root string, dirs []string, sym *refSymbol, docs *DocumentStore, models *eloquent.ModelIndex) []protocol.Location {
 	var locs []protocol.Location
 	for _, dir := range dirs {
 		scanDir := filepath.Join(root, dir)
@@ -249,9 +235,10 @@ func scanReferences(root string, dirs []string, sym *refSymbol, docs *DocumentSt
 				return nil
 			}
 			rv := &refsVisitor{
-				fc:   &phputil.FileContext{Path: path, Uses: make(phputil.UseMap)},
-				sym:  sym,
-				path: path,
+				fc:     &phputil.FileContext{Path: path, Uses: make(phputil.UseMap)},
+				sym:    sym,
+				path:   path,
+				models: models,
 			}
 			traverser.NewTraverser(rv).Traverse(astRoot)
 			for _, loc := range rv.locations {
@@ -298,6 +285,7 @@ type refsVisitor struct {
 	fc           *phputil.FileContext
 	sym          *refSymbol
 	path         string
+	models       *eloquent.ModelIndex
 	encClass     phputil.FQN
 	encMethod    *ast.StmtClassMethod
 	assignedVars map[string]phputil.FQN
@@ -340,21 +328,7 @@ func (v *refsVisitor) ExprPropertyFetch(n *ast.ExprPropertyFetch) {
 	if !ok || string(prop.Value) != v.sym.propName {
 		return
 	}
-	lhsVar, ok := n.Var.(*ast.ExprVariable)
-	if !ok {
-		return
-	}
-	lhsID, ok := lhsVar.Name.(*ast.Identifier)
-	if !ok {
-		return
-	}
-	varVal := string(lhsID.Value)
-	var modelFQN phputil.FQN
-	if varVal == "$this" || varVal == "this" {
-		modelFQN = v.encClass
-	} else {
-		modelFQN = resolveVarFQN(varVal, v.encMethod, v.assignedVars, v.fc)
-	}
+	modelFQN := resolveExprType(n.Var, v.encClass, v.encMethod, v.assignedVars, v.fc, v.models)
 	if modelFQN != v.sym.modelFQN {
 		return
 	}

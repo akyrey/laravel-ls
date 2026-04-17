@@ -5,6 +5,7 @@ import (
 	"github.com/VKCOM/php-parser/pkg/visitor"
 	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
 
+	"github.com/akyrey/laravel-ls/internal/indexer/eloquent"
 	"github.com/akyrey/laravel-ls/internal/phputil"
 )
 
@@ -98,4 +99,54 @@ func resolveVarFQN(varVal string, method *ast.StmtClassMethod, assignedVars map[
 		return fqn
 	}
 	return assignedVars[varVal]
+}
+
+// resolveExprType recursively resolves an arbitrary expression to a model FQN.
+// Handles:
+//   - *ast.ExprVariable          → variable lookup via resolveVarFQN / $this
+//   - *ast.ExprPropertyFetch     → chain: resolve LHS, look up Relationship.RelatedFQN
+//
+// Returns "" when resolution is not possible (unknown variable, non-model
+// property, missing RelatedFQN, etc.). Callers must treat "" as "unknown".
+func resolveExprType(
+	expr ast.Vertex,
+	encClass phputil.FQN,
+	method *ast.StmtClassMethod,
+	assignedVars map[string]phputil.FQN,
+	fc *phputil.FileContext,
+	models *eloquent.ModelIndex,
+) phputil.FQN {
+	switch e := expr.(type) {
+	case *ast.ExprVariable:
+		id, ok := e.Name.(*ast.Identifier)
+		if !ok {
+			return ""
+		}
+		varVal := string(id.Value)
+		if varVal == "$this" || varVal == "this" {
+			return encClass
+		}
+		return resolveVarFQN(varVal, method, assignedVars, fc)
+
+	case *ast.ExprPropertyFetch:
+		prop, ok := e.Prop.(*ast.Identifier)
+		if !ok {
+			return ""
+		}
+		lhsFQN := resolveExprType(e.Var, encClass, method, assignedVars, fc, models)
+		if lhsFQN == "" {
+			return ""
+		}
+		cat := models.Lookup(lhsFQN)
+		if cat == nil {
+			return ""
+		}
+		for _, a := range cat.ByExposed[string(prop.Value)] {
+			if a.Kind == eloquent.Relationship && a.RelatedFQN != "" {
+				return a.RelatedFQN
+			}
+		}
+		return ""
+	}
+	return ""
 }

@@ -53,6 +53,10 @@ type ModelAttribute struct {
 	// Location is the jump target. May be zero for SourceIdeHelper entries
 	// when policy is to return nothing (see plan §7).
 	Location phputil.Location
+	// RelatedFQN is the fully-qualified class name of the related model for
+	// Relationship attributes (e.g. "App\Models\Post" for a hasMany(Post::class)
+	// relation). Empty for non-relationship attributes.
+	RelatedFQN phputil.FQN
 }
 
 // ModelCatalog is the per-model symbol table produced by the Eloquent indexer.

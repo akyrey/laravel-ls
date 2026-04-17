@@ -184,22 +184,7 @@ func (v *defVisitor) ExprPropertyFetch(n *ast.ExprPropertyFetch) {
 	}
 	propName := string(prop.Value)
 
-	lhsVar, ok := n.Var.(*ast.ExprVariable)
-	if !ok {
-		return // chained access (e.g. $a->b->c): deferred to v0.2
-	}
-	lhsID, ok := lhsVar.Name.(*ast.Identifier)
-	if !ok {
-		return // dynamic variable ($$var): unsupported
-	}
-	varVal := string(lhsID.Value)
-
-	var modelFQN phputil.FQN
-	if varVal == "$this" || varVal == "this" {
-		modelFQN = v.encClass
-	} else {
-		modelFQN = resolveVarFQN(varVal, v.encMethod, v.assignedVars, v.fc)
-	}
+	modelFQN := resolveExprType(n.Var, v.encClass, v.encMethod, v.assignedVars, v.fc, v.models)
 	if modelFQN == "" {
 		return
 	}

@@ -264,6 +264,38 @@ func TestDefinition_EloquentRelationship(t *testing.T) {
 	}
 }
 
+func TestDefinition_EloquentChainedAccess(t *testing.T) {
+	modelsRoot := filepath.Join("..", "..", "testdata", "models")
+	bindings := container.NewBindingIndex()
+	models, err := eloquent.Walk(modelsRoot, []string{"."})
+	if err != nil {
+		t.Fatalf("eloquent.Walk: %v", err)
+	}
+
+	ctrlPath := filepath.Join(modelsRoot, "UserController.php")
+	src, err := os.ReadFile(ctrlPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	// Cursor on "slug_url" in "$user->posts->slug_url"
+	needle := []byte("$user->posts->slug_url")
+	idx := bytes.Index(src, needle)
+	if idx < 0 {
+		t.Fatal("needle not found in fixture")
+	}
+	offset := idx + len("$user->posts->") // on 's' of slug_url
+
+	locs := findDefinition(src, ctrlPath, offset, bindings, models)
+	if len(locs) == 0 {
+		t.Fatal("expected location for chained property, got none")
+	}
+	got := filepath.Base(URIToPath(locs[0].URI))
+	if got != "Post.php" {
+		t.Errorf("want Post.php, got %s", got)
+	}
+}
+
 func TestDefinition_NilWhenIndexesEmpty(t *testing.T) {
 	bindings := container.NewBindingIndex()
 	models := eloquent.NewModelIndex()

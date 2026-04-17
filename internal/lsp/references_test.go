@@ -46,7 +46,7 @@ func TestReferences_EloquentFromPropertyAccess(t *testing.T) {
 	// scanReferences: scan inside testdata/models (using User.php itself as root)
 	docs := newDocumentStore()
 	docs.Set(PathToURI(userPath), src)
-	locs := scanReferences(modelsRoot, []string{"."}, sym, docs)
+	locs := scanReferences(modelsRoot, []string{"."}, sym, docs, models)
 
 	if len(locs) == 0 {
 		t.Fatal("scanReferences returned no locations")
@@ -125,7 +125,7 @@ func TestReferences_ContainerFromClassConst(t *testing.T) {
 	// scanReferences over the bindings testdata directory
 	docs := newDocumentStore()
 	docs.Set(PathToURI(spPath), src)
-	locs := scanReferences(bindingsRoot, []string{"."}, sym, docs)
+	locs := scanReferences(bindingsRoot, []string{"."}, sym, docs, models)
 
 	// The AppServiceProvider itself uses PaymentGateway::class as both
 	// the abstract and potentially in other service providers.

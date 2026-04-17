@@ -144,21 +144,42 @@ sign included), not `"this"`. All variable name comparisons must include `$`.
    `$param->prop` where `$param` is a typed method parameter. Resolves the LHS
    type, looks up `ModelIndex`, returns accessor/fillable locations ranked by kind.
 
+3. **Chained Eloquent access** — cursor on `$a->rel->prop` resolves through the
+   relationship (`rel`) to the related model and jumps to `prop` in that model.
+
+4. **Bare class-name cursor** — `new ClassName(...)`, `ClassName::method(...)`,
+   `$x instanceof ClassName` all jump to the container concrete when the class
+   is bound.
+
+5. **Assignment scope** — `$user = User::find(...)` / `new User(...)` infers
+   the variable type so `$user->prop` resolves without a type hint.
+
+6. **`textDocument/references`** — finds all `$model->propName` accesses (Eloquent)
+   or `AbstractClass::class` usages (container) across `app/` and `routes/`.
+
+7. **`textDocument/completion`** — property name completions after `->` using
+   the Eloquent model index.
+
+8. **`textDocument/hover`** — shows attribute kind and model FQN for Eloquent
+   properties; shows bound concrete for container abstracts.
+
+9. **`_ide_helper_models.php` merge** — `@property` / `@method` doc-comment
+   entries are merged into the model index (AST entries win on conflict).
+
+10. **File watcher** — `app/` and `routes/` are watched via `fsnotify`; a
+    500 ms debounce triggers a full reindex on any PHP file change.
+
+11. **UTF-16 column handling** — LSP column offsets are correct for files
+    containing multi-byte Unicode characters (e.g. emoji in strings/comments).
+
 **Known limitations:**
-- Chained property access (`$a->b->c`) not supported — only single-hop.
-- UTF-16 column handling not implemented; column is returned as 0 (start of line).
-- Bare class-name cursor (without `::class`) not supported for definition.
-- Assignment scope (`$user = User::find(...)`) not resolved; only typed params + `$this`.
 - References scan covers `app/` and `routes/` only (configurable via `referenceScanDirs`).
+- Chained access resolves through one Relationship hop only (not `$a->b->c->d`).
 
 ## What is not yet implemented
 
-- `internal/indexer/idehelper/merge.go` — ide-helper stub parser
-- `internal/resolver/scope.go` + `expr.go` — expression type resolver (not used yet)
-- Relationship accessor extraction (`Relationship` kind in eloquent catalog)
-- Incremental reindex on file save (full reindex on initialize only)
-- Assignment scope tracking (`$user = User::find(...)` / `new User(...)`)
-- UTF-16 column correction (currently column is always 0)
+- Incremental reindex on file save (full reindex triggered, not incremental)
+- `textDocument/rename` — symbol rename across files
 
 ## Dependencies
 

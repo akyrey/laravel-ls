@@ -23,4 +23,10 @@ class UserController
         $user = User::find($id);
         return $user->posts->toArray();
     }
+
+    public function chainedProp(int $id): string
+    {
+        $user = User::find($id);
+        return $user->posts->slug_url;
+    }
 }

@@ -14,6 +14,72 @@ func isRelationType(fqn phputil.FQN) bool {
 	return strings.HasPrefix(string(fqn), eloquentRelationsPrefix)
 }
 
+// relationBuilderMethods is the set of Eloquent $this->method() calls whose
+// first argument is the related model class.
+var relationBuilderMethods = map[string]bool{
+	"hasOne": true, "hasMany": true,
+	"belongsTo": true, "belongsToMany": true,
+	"hasOneThrough": true, "hasManyThrough": true,
+	"morphOne": true, "morphMany": true,
+	"morphTo": true, "morphToMany": true, "morphedByMany": true,
+}
+
+// extractRelatedFQN inspects the method body for the pattern
+// `return $this->relationMethod(RelatedClass::class, ...)` and returns the
+// resolved FQN of RelatedClass. Returns "" when the pattern is not matched.
+func extractRelatedFQN(method *ast.StmtClassMethod, fc *phputil.FileContext) phputil.FQN {
+	stmtList, ok := method.Stmt.(*ast.StmtStmtList)
+	if !ok || stmtList == nil {
+		return ""
+	}
+	for _, stmt := range stmtList.Stmts {
+		ret, ok := stmt.(*ast.StmtReturn)
+		if !ok || ret.Expr == nil {
+			continue
+		}
+		call, ok := ret.Expr.(*ast.ExprMethodCall)
+		if !ok {
+			continue
+		}
+		varExpr, ok := call.Var.(*ast.ExprVariable)
+		if !ok {
+			continue
+		}
+		varID, ok := varExpr.Name.(*ast.Identifier)
+		if !ok {
+			continue
+		}
+		if string(varID.Value) != "$this" && string(varID.Value) != "this" {
+			continue
+		}
+		methodID, ok := call.Method.(*ast.Identifier)
+		if !ok || !relationBuilderMethods[string(methodID.Value)] {
+			continue
+		}
+		if len(call.Args) == 0 {
+			continue
+		}
+		arg, ok := call.Args[0].(*ast.Argument)
+		if !ok {
+			continue
+		}
+		fetch, ok := arg.Expr.(*ast.ExprClassConstFetch)
+		if !ok {
+			continue
+		}
+		constID, ok := fetch.Const.(*ast.Identifier)
+		if !ok || string(constID.Value) != "class" {
+			continue
+		}
+		name := phputil.NameToString(fetch.Class)
+		if name == "" {
+			continue
+		}
+		return fc.Resolve(name)
+	}
+	return ""
+}
+
 var (
 	legacyGetterRe = regexp.MustCompile(`^get([A-Z].+)Attribute$`)
 	legacySetterRe = regexp.MustCompile(`^set([A-Z].+)Attribute$`)
@@ -67,6 +133,7 @@ func extractMethods(path string, classNode *ast.StmtClass, fc *phputil.FileConte
 						Kind:        Relationship,
 						Source:      SourceAST,
 						Location:    loc,
+						RelatedFQN:  extractRelatedFQN(m, fc),
 					})
 					continue
 				}
