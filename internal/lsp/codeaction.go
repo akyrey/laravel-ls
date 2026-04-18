@@ -172,14 +172,17 @@ func buildAddToFillableEdit(modelPath string, src []byte, propName string) *prot
 
 // byteOffsetToLineCol converts a byte offset to a 0-based (line, utf16-col) pair.
 func byteOffsetToLineCol(src []byte, offset int) (line, col int) {
-	for i := 0; i < offset && i < len(src); i++ {
+	if offset > len(src) {
+		offset = len(src)
+	}
+	lineStart := 0
+	for i := 0; i < offset; i++ {
 		if src[i] == '\n' {
 			line++
-			col = 0
-		} else {
-			col++
+			lineStart = i + 1
 		}
 	}
+	col = int(countUTF16Units(src[lineStart:offset]))
 	return line, col
 }
 
