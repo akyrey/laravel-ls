@@ -196,9 +196,28 @@ sign included), not `"this"`. All variable name comparisons must include `$`.
 byte), matching LSP's exclusive range end. `toLSPRange` uses it directly
 without adding 1.
 
+15. **Incremental reindex** — file-save events trigger per-file reindex instead
+    of a full walk. Both `BindingIndex` and `ModelIndex` retain their symbol
+    tables (`Syms()`). `container.ReindexFile` / `eloquent.ReindexFile` clone
+    the symbol table, remove the changed file's declarations, re-scan the file,
+    re-resolve the transitive sets, then return a new index with only that file's
+    entries replaced. The server swaps the new indexes atomically under `s.mu`.
+    Falls back to full reindex when the symbol table is absent (first run).
+
+16. **`textDocument/codeAction`** — four quick-fixes offered per `unknown property`
+    diagnostic: "Add to `$fillable`", "Add to `$casts`" (`'prop' => 'string'`),
+    "Add to `$appends`", "Add to `$hidden`". A single `arrayPropVisitor` AST
+    pass finds all four arrays; each action inserts at the appropriate point.
+    Requires `cat.Path` set on `ModelCatalog` (populated by Walk).
+
+17. **`textDocument/documentSymbol`** — returns all exposed Eloquent attributes
+    for model files as `DocumentSymbol` entries. Method-based attributes appear
+    as `SymbolKindMethod`; array-entry attributes appear as `SymbolKindProperty`.
+    Returns nil for non-model files so the editor falls through to other
+    providers (Intelephense, Psalm, etc.).
+
 ## What is not yet implemented
 
-- Incremental reindex on file save (full reindex triggered, not incremental)
 - `textDocument/rename` for container abstracts (requires full PHP class rename)
 - Diagnostics for renamed properties (stale after rename until next reindex)
 

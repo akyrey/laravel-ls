@@ -35,6 +35,7 @@ type Binding struct {
 // bind the same interface).
 type BindingIndex struct {
 	byAbstract map[phputil.FQN][]Binding
+	syms       *symbolTable // retained for incremental per-file reindex
 }
 
 // NewBindingIndex returns an empty, ready-to-use index.
@@ -51,6 +52,26 @@ func (idx *BindingIndex) Add(b Binding) {
 // Returns nil (not an error) when no binding is found.
 func (idx *BindingIndex) Lookup(abstract phputil.FQN) []Binding {
 	return idx.byAbstract[abstract]
+}
+
+// Syms returns the retained symbol table, or nil if not built via Walk.
+func (idx *BindingIndex) Syms() *symbolTable { return idx.syms }
+
+// RemoveByFile removes all bindings whose Source.Path equals path.
+func (idx *BindingIndex) RemoveByFile(path string) {
+	for abstract, bindings := range idx.byAbstract {
+		filtered := bindings[:0]
+		for _, b := range bindings {
+			if b.Source.Path != path {
+				filtered = append(filtered, b)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(idx.byAbstract, abstract)
+		} else {
+			idx.byAbstract[abstract] = filtered
+		}
+	}
 }
 
 // All returns every binding in the index, in unspecified order.

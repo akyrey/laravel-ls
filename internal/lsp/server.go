@@ -65,12 +65,18 @@ func (s *Server) Initialize(_ *glsp.Context, p *protocol.InitializeParams) (any,
 			DefinitionProvider: true,
 			ReferencesProvider: true,
 			HoverProvider:      true,
+			CodeActionProvider: &protocol.CodeActionOptions{
+				CodeActionKinds: []protocol.CodeActionKind{
+					protocol.CodeActionKindQuickFix,
+				},
+			},
 			RenameProvider: &protocol.RenameOptions{
 				PrepareProvider: boolPtr(true),
 			},
 			CompletionProvider: &protocol.CompletionOptions{
 				TriggerCharacters: triggerChars,
 			},
+			DocumentSymbolProvider: true,
 		},
 		ServerInfo: &protocol.InitializeResultServerInfo{
 			Name:    "laravel-lsp",
@@ -219,12 +225,15 @@ func (s *Server) startWatcher(root string) {
 	go s.watchLoop(w, root)
 }
 
-// watchLoop is the event loop for the fsnotify watcher.
+// watchLoop is the event loop for the fsnotify watcher. It accumulates changed
+// PHP file paths during the debounce window, then calls reindexFiles with just
+// those paths instead of a full walk.
 func (s *Server) watchLoop(w *fsnotify.Watcher, root string) {
 	defer w.Close()
 
 	timer := time.NewTimer(reindexDebounce)
 	timer.Stop()
+	changedPaths := make(map[string]bool)
 
 	for {
 		select {
@@ -232,14 +241,13 @@ func (s *Server) watchLoop(w *fsnotify.Watcher, root string) {
 			if !ok {
 				return
 			}
-			// When a new directory appears, add it so nested files are watched.
 			if event.Has(fsnotify.Create) {
 				if fi, err := os.Stat(event.Name); err == nil && fi.IsDir() {
 					_ = w.Add(event.Name)
 				}
 			}
 			if strings.HasSuffix(event.Name, ".php") {
-				// Reset the debounce timer.
+				changedPaths[event.Name] = true
 				if !timer.Stop() {
 					select {
 					case <-timer.C:
@@ -254,9 +262,53 @@ func (s *Server) watchLoop(w *fsnotify.Watcher, root string) {
 			}
 			s.log.Errorf("laravel-lsp: watcher: %v", err)
 		case <-timer.C:
-			s.reindex(root)
+			paths := make([]string, 0, len(changedPaths))
+			for p := range changedPaths {
+				paths = append(paths, p)
+			}
+			changedPaths = make(map[string]bool)
+			s.reindexFiles(root, paths)
 		}
 	}
+}
+
+// reindexFiles performs per-file incremental reindex for each changed path.
+// Falls back to a full reindex when the index has no retained symbol table
+// (e.g., first startup before any index exists).
+func (s *Server) reindexFiles(root string, paths []string) {
+	s.mu.RLock()
+	bindings, models := s.bindings, s.models
+	s.mu.RUnlock()
+
+	if bindings == nil || models == nil || bindings.Syms() == nil || models.Syms() == nil {
+		s.reindex(root)
+		return
+	}
+
+	newBindings := bindings
+	newModels := models
+
+	for _, path := range paths {
+		if nb, e := container.ReindexFile(path, newBindings); e != nil {
+			s.log.Errorf("laravel-lsp: container reindex %s: %v", path, e)
+		} else {
+			newBindings = nb
+		}
+
+		if nm, e := eloquent.ReindexFile(path, newModels); e != nil {
+			s.log.Errorf("laravel-lsp: eloquent reindex %s: %v", path, e)
+		} else {
+			newModels = nm
+		}
+	}
+
+	if newBindings != bindings || newModels != models {
+		s.mu.Lock()
+		s.bindings = newBindings
+		s.models = newModels
+		s.mu.Unlock()
+	}
+	s.log.Infof("laravel-lsp: incremental reindex complete (%d files)", len(paths))
 }
 
 // detectRoot extracts the project root from InitializeParams.

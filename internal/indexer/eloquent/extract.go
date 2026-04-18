@@ -53,6 +53,7 @@ func (v *extractVisitor) StmtClass(n *ast.StmtClass) {
 
 	catalog := &ModelCatalog{
 		Class:     fqn,
+		Path:      v.path,
 		Extends:   extends,
 		ByExposed: make(map[string][]ModelAttribute),
 	}

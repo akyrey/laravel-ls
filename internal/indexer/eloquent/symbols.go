@@ -18,17 +18,50 @@ type classDecl struct {
 type symbolTable struct {
 	classes map[phputil.FQN]*classDecl
 	models  map[phputil.FQN]struct{} // populated by resolveModels
+	byFile  map[string][]phputil.FQN // path → FQNs declared in that file
 }
 
 func newSymbolTable() *symbolTable {
 	return &symbolTable{
 		classes: make(map[phputil.FQN]*classDecl),
 		models:  make(map[phputil.FQN]struct{}),
+		byFile:  make(map[string][]phputil.FQN),
 	}
 }
 
-func (st *symbolTable) addClass(fqn phputil.FQN, d *classDecl) {
+func (st *symbolTable) addClass(path string, fqn phputil.FQN, d *classDecl) {
 	st.classes[fqn] = d
+	st.byFile[path] = append(st.byFile[path], fqn)
+}
+
+// removeFile removes all class declarations contributed by path and re-resolves
+// the model set. Called before re-scanning a changed file.
+func (st *symbolTable) removeFile(path string) {
+	for _, fqn := range st.byFile[path] {
+		delete(st.classes, fqn)
+	}
+	delete(st.byFile, path)
+	st.models = make(map[phputil.FQN]struct{})
+	st.resolveModels()
+}
+
+// clone returns a shallow copy of st with independent maps (classDecl values are
+// shared since they are never mutated after construction).
+func (st *symbolTable) clone() *symbolTable {
+	c := &symbolTable{
+		classes: make(map[phputil.FQN]*classDecl, len(st.classes)),
+		models:  make(map[phputil.FQN]struct{}),
+		byFile:  make(map[string][]phputil.FQN, len(st.byFile)),
+	}
+	for k, v := range st.classes {
+		c.classes[k] = v
+	}
+	for k, v := range st.byFile {
+		cp := make([]phputil.FQN, len(v))
+		copy(cp, v)
+		c.byFile[k] = cp
+	}
+	return c
 }
 
 func (st *symbolTable) isModel(fqn phputil.FQN) bool {

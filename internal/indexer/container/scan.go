@@ -58,7 +58,7 @@ func (v *scanVisitor) StmtClass(n *ast.StmtClass) {
 	if n.Extends != nil {
 		extends = v.fc.Resolve(phputil.NameToString(n.Extends))
 	}
-	v.syms.addClass(fqn, &classDecl{
+	v.syms.addClass(v.path, fqn, &classDecl{
 		Extends:  extends,
 		Location: phputil.FromPosition(v.path, n.GetPosition()),
 	})
@@ -69,7 +69,7 @@ func (v *scanVisitor) StmtInterface(n *ast.StmtInterface) {
 	if fqn == "" {
 		return
 	}
-	v.syms.addClass(fqn, &classDecl{
+	v.syms.addClass(v.path, fqn, &classDecl{
 		Location:    phputil.FromPosition(v.path, n.GetPosition()),
 		IsInterface: true,
 	})

@@ -43,5 +43,7 @@ func buildHandler(s *lsp.Server) *protocol.Handler {
 		TextDocumentCompletion: s.Completion,
 		TextDocumentRename:        s.Rename,
 		TextDocumentPrepareRename: s.PrepareRename,
+		TextDocumentCodeAction:    s.CodeAction,
+		TextDocumentDocumentSymbol: s.DocumentSymbol,
 	}
 }

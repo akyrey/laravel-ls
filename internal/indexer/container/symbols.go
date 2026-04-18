@@ -15,17 +15,49 @@ type classDecl struct {
 type symbolTable struct {
 	classes          map[phputil.FQN]*classDecl
 	serviceProviders map[phputil.FQN]struct{} // populated by resolveServiceProviders
+	byFile           map[string][]phputil.FQN // path → FQNs declared in that file
 }
 
 func newSymbolTable() *symbolTable {
 	return &symbolTable{
 		classes:          make(map[phputil.FQN]*classDecl),
 		serviceProviders: make(map[phputil.FQN]struct{}),
+		byFile:           make(map[string][]phputil.FQN),
 	}
 }
 
-func (st *symbolTable) addClass(fqn phputil.FQN, d *classDecl) {
+func (st *symbolTable) addClass(path string, fqn phputil.FQN, d *classDecl) {
 	st.classes[fqn] = d
+	st.byFile[path] = append(st.byFile[path], fqn)
+}
+
+// removeFile removes all class declarations contributed by path and re-resolves
+// the service provider set.
+func (st *symbolTable) removeFile(path string) {
+	for _, fqn := range st.byFile[path] {
+		delete(st.classes, fqn)
+	}
+	delete(st.byFile, path)
+	st.serviceProviders = make(map[phputil.FQN]struct{})
+	st.resolveServiceProviders()
+}
+
+// clone returns a shallow copy of st with independent maps.
+func (st *symbolTable) clone() *symbolTable {
+	c := &symbolTable{
+		classes:          make(map[phputil.FQN]*classDecl, len(st.classes)),
+		serviceProviders: make(map[phputil.FQN]struct{}),
+		byFile:           make(map[string][]phputil.FQN, len(st.byFile)),
+	}
+	for k, v := range st.classes {
+		c.classes[k] = v
+	}
+	for k, v := range st.byFile {
+		cp := make([]phputil.FQN, len(v))
+		copy(cp, v)
+		c.byFile[k] = cp
+	}
+	return c
 }
 
 // classLocation returns the location of a class declaration, or zero if unknown.

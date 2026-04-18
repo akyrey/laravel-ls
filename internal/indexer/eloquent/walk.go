@@ -11,6 +11,49 @@ import (
 	"github.com/akyrey/laravel-ls/internal/phpparse"
 )
 
+// ReindexFile updates idx for a single changed file without re-walking the
+// whole project. It clones the retained symbol table, removes the file's old
+// declarations, re-scans it, re-resolves the model set, then rebuilds the
+// index by dropping the file's old catalogs and adding the newly extracted ones.
+// Returns a new *ModelIndex; the caller swaps it in atomically.
+func ReindexFile(path string, old *ModelIndex) (*ModelIndex, error) {
+	if old == nil || old.syms == nil {
+		return nil, fmt.Errorf("eloquent: old index has no symbol table")
+	}
+
+	newSyms := old.syms.clone()
+	newSyms.removeFile(path)
+
+	astRoot, err := phpparse.File(path)
+	if err != nil {
+		// File deleted or parse error — remove its entries, keep the rest.
+		newIdx := NewModelIndex()
+		newIdx.syms = newSyms
+		for fqn, cat := range old.byFQN {
+			if cat.Path != path {
+				newIdx.byFQN[fqn] = cat
+			}
+		}
+		return newIdx, nil
+	}
+
+	sv := newScanVisitor(path, newSyms)
+	traverser.NewTraverser(sv).Traverse(astRoot)
+	newSyms.resolveModels()
+
+	newIdx := NewModelIndex()
+	newIdx.syms = newSyms
+	for fqn, cat := range old.byFQN {
+		if cat.Path != path {
+			newIdx.byFQN[fqn] = cat
+		}
+	}
+	for _, catalog := range extractFileModels(path, astRoot, newSyms) {
+		newIdx.Add(catalog)
+	}
+	return newIdx, nil
+}
+
 // DefaultScanDirs are the directories scanned when no explicit list is given.
 var DefaultScanDirs = []string{"app"}
 
@@ -24,6 +67,7 @@ func Walk(root string, dirs []string) (*ModelIndex, error) {
 	}
 
 	idx := NewModelIndex()
+	idx.syms = syms
 	for _, dir := range dirs {
 		scanDir := filepath.Join(root, dir)
 		err := filepath.WalkDir(scanDir, func(path string, d fs.DirEntry, walkErr error) error {

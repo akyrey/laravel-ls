@@ -7,8 +7,56 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
 	"github.com/akyrey/laravel-ls/internal/phpparse"
 )
+
+// ReindexFile updates idx for a single changed file. It clones the retained
+// symbol table, removes the file's old declarations, re-scans the file,
+// re-resolves the service provider set, then rebuilds the index by dropping
+// the file's old bindings and adding newly extracted ones.
+// Returns a new *BindingIndex; the caller swaps it in atomically.
+func ReindexFile(path string, old *BindingIndex) (*BindingIndex, error) {
+	if old == nil || old.syms == nil {
+		return nil, fmt.Errorf("container: old index has no symbol table")
+	}
+
+	newSyms := old.syms.clone()
+	newSyms.removeFile(path)
+
+	astRoot, err := phpparse.File(path)
+	if err != nil {
+		// File deleted or parse error — remove its entries, keep the rest.
+		newIdx := NewBindingIndex()
+		newIdx.syms = newSyms
+		for abstract, bindings := range old.byAbstract {
+			for _, b := range bindings {
+				if b.Source.Path != path {
+					newIdx.byAbstract[abstract] = append(newIdx.byAbstract[abstract], b)
+				}
+			}
+		}
+		return newIdx, nil
+	}
+
+	sv := newScanVisitor(path, newSyms)
+	traverser.NewTraverser(sv).Traverse(astRoot)
+	newSyms.resolveServiceProviders()
+
+	newIdx := NewBindingIndex()
+	newIdx.syms = newSyms
+	for abstract, bindings := range old.byAbstract {
+		for _, b := range bindings {
+			if b.Source.Path != path {
+				newIdx.byAbstract[abstract] = append(newIdx.byAbstract[abstract], b)
+			}
+		}
+	}
+	for _, b := range extractFileBindings(path, astRoot, newSyms) {
+		newIdx.Add(b)
+	}
+	return newIdx, nil
+}
 
 // DefaultScanDirs are the subdirectories walked when no explicit dirs are given.
 // These are relative to the project root (the rootUri from LSP initialize).
@@ -36,6 +84,7 @@ func Walk(root string, dirs []string) (*BindingIndex, error) {
 
 	// Phase 2: binding extraction.
 	idx := NewBindingIndex()
+	idx.syms = syms
 	for _, dir := range dirs {
 		scanDir := filepath.Join(root, dir)
 		walkErr := filepath.WalkDir(scanDir, func(path string, d fs.DirEntry, err error) error {

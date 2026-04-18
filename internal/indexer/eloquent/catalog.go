@@ -62,6 +62,7 @@ type ModelAttribute struct {
 // ModelCatalog is the per-model symbol table produced by the Eloquent indexer.
 type ModelCatalog struct {
 	Class   phputil.FQN
+	Path    string      // absolute path of the file that defines this class
 	Extends phputil.FQN // direct parent FQN (for inheritance-chain walking)
 
 	// ByExposed maps the snake_case attribute name to all known entries.
@@ -74,6 +75,7 @@ type ModelCatalog struct {
 // ModelIndex is the full Eloquent symbol table for a project.
 type ModelIndex struct {
 	byFQN map[phputil.FQN]*ModelCatalog
+	syms  *symbolTable // retained for incremental per-file reindex
 }
 
 // NewModelIndex returns an empty, ready-to-use index.
@@ -89,6 +91,19 @@ func (idx *ModelIndex) Add(c *ModelCatalog) {
 // Lookup returns the catalog for the given model FQN, or nil if not indexed.
 func (idx *ModelIndex) Lookup(fqn phputil.FQN) *ModelCatalog {
 	return idx.byFQN[fqn]
+}
+
+// Syms returns the retained symbol table, or nil if this index was not built
+// via Walk (e.g. constructed manually in tests).
+func (idx *ModelIndex) Syms() *symbolTable { return idx.syms }
+
+// RemoveByFile removes all catalogs whose source file is path.
+func (idx *ModelIndex) RemoveByFile(path string) {
+	for fqn, cat := range idx.byFQN {
+		if cat.Path == path {
+			delete(idx.byFQN, fqn)
+		}
+	}
 }
 
 // All returns every catalog in the index.
