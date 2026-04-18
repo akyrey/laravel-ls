@@ -207,6 +207,34 @@ func TestRelationship(t *testing.T) {
 	}
 }
 
+func TestRelationship_UntypedMethod(t *testing.T) {
+	t.Parallel()
+	idx := walkFixtures(t)
+
+	cat := idx.Lookup("App\\Models\\Post")
+	if cat == nil {
+		t.Fatal("Post model not indexed")
+	}
+
+	// author() has no return-type annotation — detected via body scan.
+	entries := cat.ByExposed["author"]
+	found := false
+	for _, a := range entries {
+		if a.Kind == eloquent.Relationship && a.MethodName == "author" {
+			found = true
+			if a.RelatedFQN != "App\\Models\\User" {
+				t.Errorf("RelatedFQN = %q, want %q", a.RelatedFQN, "App\\Models\\User")
+			}
+			if a.Location.Zero() {
+				t.Error("Location is zero")
+			}
+		}
+	}
+	if !found {
+		t.Errorf("untyped Relationship for author not found; got %+v", entries)
+	}
+}
+
 func TestNonModelNotIndexed(t *testing.T) {
 	t.Parallel()
 	idx := walkFixtures(t)

@@ -110,7 +110,7 @@ func extractMethods(path string, classNode *ast.StmtClass, fc *phputil.FileConte
 		loc := phputil.FromPosition(path, m.GetPosition())
 
 		// Modern accessor: return type resolves to the Eloquent Attribute class.
-		// Relationship method: return type is in the Eloquent Relations namespace.
+		// Typed relationship: return type is in the Eloquent Relations namespace.
 		if m.ReturnType != nil {
 			rtNode := unwrapReturnType(m.ReturnType)
 			rtName := phputil.NameToString(rtNode)
@@ -138,6 +138,20 @@ func extractMethods(path string, classNode *ast.StmtClass, fc *phputil.FileConte
 					continue
 				}
 			}
+		}
+
+		// Untyped relationship: no return-type annotation, but the method body
+		// contains `return $this->relationMethod(RelatedClass::class, ...)`.
+		if relatedFQN := extractRelatedFQN(m, fc); relatedFQN != "" {
+			out = append(out, ModelAttribute{
+				ExposedName: methodName,
+				MethodName:  methodName,
+				Kind:        Relationship,
+				Source:      SourceAST,
+				Location:    loc,
+				RelatedFQN:  relatedFQN,
+			})
+			continue
 		}
 
 		// Legacy accessor: getXxxAttribute()

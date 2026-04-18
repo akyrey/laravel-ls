@@ -175,6 +175,7 @@ sign included), not `"this"`. All variable name comparisons must include `$`.
 **Known limitations:**
 - References scan covers `app/` and `routes/` only (configurable via `referenceScanDirs`).
 - Chained access resolves through one Relationship hop only (not `$a->b->c->d`).
+- Relationship detection from the method body requires the pattern `return $this->relationMethod(Class::class)`; more complex bodies (multi-statement, variable indirection) are not detected.
 
 12. **`textDocument/rename`** — Eloquent property rename across files. Reference
     sites (`$model->propName`) and method-based declaration sites (modern/legacy

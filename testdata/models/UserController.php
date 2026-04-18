@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Post;
 use App\Models\User;
 
 class UserController
@@ -28,5 +29,11 @@ class UserController
     {
         $user = User::find($id);
         return $user->posts->slug_url;
+    }
+
+    public function authorEmail(int $postId): string
+    {
+        $post = Post::find($postId);
+        return $post->author->email_address;
     }
 }

@@ -13,4 +13,10 @@ class Post extends Model
     {
         $this->attributes['title'] = strtolower($value);
     }
+
+    // Untyped relationship — no return-type annotation.
+    public function author()
+    {
+        return $this->belongsTo(User::class);
+    }
 }
