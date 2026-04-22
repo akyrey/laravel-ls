@@ -21,9 +21,11 @@ const diagSource = "laravel-lsp"
 // notification for any unrecognised Eloquent property accesses it finds.
 // Calling it with a nil models index clears existing diagnostics for the file.
 func publishDiagnostics(ctx *glsp.Context, uri protocol.DocumentUri, src []byte, path string, models *eloquent.ModelIndex) {
-	var diags []protocol.Diagnostic
+	diags := []protocol.Diagnostic{}
 	if models != nil && len(src) > 0 {
-		diags = collectDiagnostics(src, path, models)
+		if collected := collectDiagnostics(src, path, models); collected != nil {
+			diags = collected
+		}
 	}
 	ctx.Notify(string(protocol.ServerTextDocumentPublishDiagnostics), protocol.PublishDiagnosticsParams{
 		URI:         uri,
