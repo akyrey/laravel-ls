@@ -134,6 +134,51 @@ func TestReferences_ContainerFromClassConst(t *testing.T) {
 	}
 }
 
+// TestReferences_ModernAccessorFullFlow verifies that a single-word modern
+// accessor (e.g. price()) is both identified from a method-name cursor AND has
+// its usages found by the scanner in the same testdata tree.
+func TestReferences_ModernAccessorFullFlow(t *testing.T) {
+	modelsRoot := filepath.Join("..", "..", "testdata", "models")
+	bindings := container.NewBindingIndex()
+	models, err := eloquent.Walk(modelsRoot, []string{"."})
+	if err != nil {
+		t.Fatalf("eloquent.Walk: %v", err)
+	}
+
+	userPath := filepath.Join(modelsRoot, "User.php")
+	src, err := os.ReadFile(userPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	// Cursor on "price" (the method name in its declaration).
+	needle := []byte("function price()")
+	idx := bytes.Index(src, needle)
+	if idx < 0 {
+		t.Fatal("function price() not found in fixture")
+	}
+	offset := idx + len("function ") // on 'p' of price
+
+	sym := identifySymbol(src, userPath, offset, bindings, models)
+	if sym == nil {
+		t.Fatal("identifySymbol returned nil for price() method name cursor")
+	}
+	if !sym.isEloquent() {
+		t.Fatalf("expected Eloquent symbol, got %+v", sym)
+	}
+	if sym.propName != "price" {
+		t.Errorf("want propName=price, got %q", sym.propName)
+	}
+
+	docs := newDocumentStore()
+	docs.Set(PathToURI(userPath), src)
+	locs := scanReferences(modelsRoot, []string{"."}, sym, docs, models)
+
+	if len(locs) == 0 {
+		t.Fatal("scanReferences returned no locations for price attribute")
+	}
+}
+
 func TestReferences_NilSymbolOnUnknown(t *testing.T) {
 	bindings := container.NewBindingIndex()
 	models := eloquent.NewModelIndex()

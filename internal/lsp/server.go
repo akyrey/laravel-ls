@@ -198,6 +198,11 @@ func (s *Server) reindex(root string) {
 	}
 	s.mu.Unlock()
 	s.log.Infof("laravel-lsp: indexing complete")
+	if models != nil {
+		for _, c := range models.All() {
+			s.log.Debugf("laravel-lsp: indexed model %s (%s)", c.Class, c.Path)
+		}
+	}
 }
 
 // startWatcher watches watchDirs under root for PHP file changes and triggers

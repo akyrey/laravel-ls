@@ -36,4 +36,10 @@ class UserController
         $post = Post::find($postId);
         return $post->author->email_address;
     }
+
+    public function price(int $id): string
+    {
+        $user = User::find($id);
+        return $user->price;
+    }
 }

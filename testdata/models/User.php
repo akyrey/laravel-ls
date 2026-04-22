@@ -39,9 +39,27 @@ class User extends Model
         return $this->hasMany(Post::class);
     }
 
+    /**
+     * Get or set the calculated price.
+     *
+     * @return Attribute<string|null, string|null>
+     */
+    protected function price(): Attribute
+    {
+        return Attribute::make(
+            get: fn (): ?string => $this->raw_price,
+            set: fn (?string $value): void => $this->raw_price = $value,
+        );
+    }
+
     public function greet(): string
     {
         // $this->email_address triggers Feature B: jump to emailAddress()
         return 'hi ' . $this->email_address;
+    }
+
+    public function formattedPrice(): string
+    {
+        return '$' . $this->price;
     }
 }
