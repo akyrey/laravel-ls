@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
-	"github.com/akyrey/laravel-ls/internal/phpparse"
+	"github.com/akyrey/laravel-lsp/internal/phpparse"
 )
 
 // ReindexFile updates idx for a single changed file. It clones the retained

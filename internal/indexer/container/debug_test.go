@@ -8,7 +8,7 @@ import (
 	"github.com/VKCOM/php-parser/pkg/visitor"
 	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
 
-	"github.com/akyrey/laravel-ls/internal/phpparse"
+	"github.com/akyrey/laravel-lsp/internal/phpparse"
 )
 
 func TestDebugDump(t *testing.T) {

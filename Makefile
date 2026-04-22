@@ -1,7 +1,7 @@
 .PHONY: build test test-race lint vet fmt tidy clean install
 
-BINARY := laravel-ls
-MODULE  := github.com/akyrey/laravel-ls
+BINARY := laravel-lsp
+MODULE  := github.com/akyrey/laravel-lsp
 
 build:
 	go build -o $(BINARY) ./cmd/laravel-lsp

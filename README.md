@@ -1,4 +1,4 @@
-# laravel-ls
+# laravel-lsp
 
 A Go LSP server that brings Laravel-specific navigation to editors without
 Laravel Idea. Provides jump-to-definition, find-references, hover, completion,
@@ -64,14 +64,14 @@ Jump from `$user->email_address` to the accessor declaration.
 ## Installation
 
 ```bash
-go install github.com/akyrey/laravel-ls/cmd/laravel-lsp@latest
+go install github.com/akyrey/laravel-lsp/cmd/laravel-lsp@latest
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/akyrey/laravel-ls.git
-cd laravel-ls
+git clone https://github.com/akyrey/laravel-lsp.git
+cd laravel-lsp
 make build
 ```
 
@@ -81,8 +81,8 @@ make build
 
 ```lua
 vim.lsp.start({
-  name = 'laravel-ls',
-  cmd = { vim.fn.exepath('laravel-ls') },
+  name = 'laravel-lsp',
+  cmd = { vim.fn.exepath('laravel-lsp') },
   root_dir = vim.fs.root(0, { 'artisan', 'composer.json' }),
   filetypes = { 'php' },
 })
@@ -144,7 +144,7 @@ testdata/
 ## Development
 
 ```bash
-make build        # build ./laravel-ls
+make build        # build ./laravel-lsp
 make test         # go test ./...
 make test-race    # go test -race ./...
 make vet          # go vet ./...

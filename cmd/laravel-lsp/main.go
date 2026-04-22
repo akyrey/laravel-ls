@@ -6,7 +6,7 @@ import (
 	protocol "github.com/tliron/glsp/protocol_3_16"
 	"github.com/tliron/glsp/server"
 
-	"github.com/akyrey/laravel-ls/internal/lsp"
+	"github.com/akyrey/laravel-lsp/internal/lsp"
 )
 
 const lsName = "laravel-lsp"

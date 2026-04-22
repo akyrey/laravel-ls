@@ -1,6 +1,6 @@
 package eloquent
 
-import "github.com/akyrey/laravel-ls/internal/phputil"
+import "github.com/akyrey/laravel-lsp/internal/phputil"
 
 // AttributeKind classifies the source of a model attribute entry.
 type AttributeKind int

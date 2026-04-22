@@ -2,7 +2,7 @@ package eloquent
 
 import (
 	"github.com/VKCOM/php-parser/pkg/ast"
-	"github.com/akyrey/laravel-ls/internal/phputil"
+	"github.com/akyrey/laravel-lsp/internal/phputil"
 )
 
 // arrayProps maps PHP property names to their AttributeKind.

@@ -12,9 +12,9 @@ import (
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
 
-	"github.com/akyrey/laravel-ls/internal/indexer/eloquent"
-	"github.com/akyrey/laravel-ls/internal/phpparse"
-	"github.com/akyrey/laravel-ls/internal/phputil"
+	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
+	"github.com/akyrey/laravel-lsp/internal/phpparse"
+	"github.com/akyrey/laravel-lsp/internal/phputil"
 )
 
 // PrepareRename validates that the cursor is on a renameable symbol and returns

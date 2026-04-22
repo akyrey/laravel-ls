@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/akyrey/laravel-ls/internal/indexer/eloquent"
-	"github.com/akyrey/laravel-ls/internal/indexer/idehelper"
+	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
+	"github.com/akyrey/laravel-lsp/internal/indexer/idehelper"
 )
 
 const fixtureFile = "../../../testdata/idehelper/_ide_helper_models.php"

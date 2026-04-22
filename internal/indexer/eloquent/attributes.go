@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/VKCOM/php-parser/pkg/ast"
-	"github.com/akyrey/laravel-ls/internal/phputil"
+	"github.com/akyrey/laravel-lsp/internal/phputil"
 )
 
 // isRelationType returns true if fqn is one of the built-in Eloquent relation

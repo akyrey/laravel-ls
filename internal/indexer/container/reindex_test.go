@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/akyrey/laravel-ls/internal/indexer/container"
+	"github.com/akyrey/laravel-lsp/internal/indexer/container"
 )
 
 func TestReindexFile_PreservesOtherBindings(t *testing.T) {

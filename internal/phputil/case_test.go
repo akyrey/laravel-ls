@@ -3,7 +3,7 @@ package phputil_test
 import (
 	"testing"
 
-	"github.com/akyrey/laravel-ls/internal/phputil"
+	"github.com/akyrey/laravel-lsp/internal/phputil"
 )
 
 // caseRow mirrors the test table from the plan. Each row is a triple of

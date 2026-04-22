@@ -6,7 +6,7 @@ import (
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
 
-	"github.com/akyrey/laravel-ls/internal/indexer/eloquent"
+	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
 )
 
 // kindSymbol maps an AttributeKind to an LSP SymbolKind.

@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
-	"github.com/akyrey/laravel-ls/internal/indexer/eloquent"
-	"github.com/akyrey/laravel-ls/internal/phpparse"
+	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
+	"github.com/akyrey/laravel-lsp/internal/phpparse"
 	protocol "github.com/tliron/glsp/protocol_3_16"
 )
 
@@ -111,7 +111,7 @@ func TestCodeAction_NoActionsForUnknownSource(t *testing.T) {
 	// Diagnostics from other sources must be ignored.
 	diags := []protocol.Diagnostic{
 		{Message: "unknown property 'foo' on App\\Models\\User"},
-		// Source is nil — not from laravel-ls, so CodeAction should skip it.
+		// Source is nil — not from laravel-lsp, so CodeAction should skip it.
 	}
 	_ = diags // The handler checks Source != nil, so no actions expected.
 	// Smoke test: building an edit for empty source should return nil.

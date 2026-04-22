@@ -9,13 +9,13 @@ import (
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
 
-	"github.com/akyrey/laravel-ls/internal/indexer/eloquent"
-	"github.com/akyrey/laravel-ls/internal/phpparse"
-	"github.com/akyrey/laravel-ls/internal/phputil"
+	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
+	"github.com/akyrey/laravel-lsp/internal/phpparse"
+	"github.com/akyrey/laravel-lsp/internal/phputil"
 )
 
 // diagSource is the source label shown in the editor for diagnostics.
-const diagSource = "laravel-ls"
+const diagSource = "laravel-lsp"
 
 // publishDiagnostics parses src and pushes a textDocument/publishDiagnostics
 // notification for any unrecognised Eloquent property accesses it finds.

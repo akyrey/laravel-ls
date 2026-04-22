@@ -5,8 +5,8 @@ import (
 	"github.com/VKCOM/php-parser/pkg/visitor"
 	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
 
-	"github.com/akyrey/laravel-ls/internal/indexer/eloquent"
-	"github.com/akyrey/laravel-ls/internal/phputil"
+	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
+	"github.com/akyrey/laravel-lsp/internal/phputil"
 )
 
 // modelStaticMethods is the set of Eloquent static methods that return a model

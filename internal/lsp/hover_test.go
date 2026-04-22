@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/akyrey/laravel-ls/internal/indexer/container"
-	"github.com/akyrey/laravel-ls/internal/indexer/eloquent"
+	"github.com/akyrey/laravel-lsp/internal/indexer/container"
+	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
 )
 
 func TestHover_EloquentPropertyAccess(t *testing.T) {

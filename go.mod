@@ -1,4 +1,4 @@
-module github.com/akyrey/laravel-ls
+module github.com/akyrey/laravel-lsp
 
 go 1.26.2
 

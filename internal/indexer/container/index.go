@@ -1,6 +1,6 @@
 package container
 
-import "github.com/akyrey/laravel-ls/internal/phputil"
+import "github.com/akyrey/laravel-lsp/internal/phputil"
 
 // BindingKind classifies how a binding was registered.
 type BindingKind int

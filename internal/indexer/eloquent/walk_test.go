@@ -3,8 +3,8 @@ package eloquent_test
 import (
 	"testing"
 
-	"github.com/akyrey/laravel-ls/internal/indexer/eloquent"
-	"github.com/akyrey/laravel-ls/internal/phputil"
+	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
+	"github.com/akyrey/laravel-lsp/internal/phputil"
 )
 
 const fixtureRoot = "../../../testdata/models"

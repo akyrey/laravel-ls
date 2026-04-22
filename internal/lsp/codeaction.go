@@ -10,8 +10,8 @@ import (
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
 
-	"github.com/akyrey/laravel-ls/internal/phpparse"
-	"github.com/akyrey/laravel-ls/internal/phputil"
+	"github.com/akyrey/laravel-lsp/internal/phpparse"
+	"github.com/akyrey/laravel-lsp/internal/phputil"
 )
 
 // unknownPropRe matches the diagnostic message produced by diagVisitor.

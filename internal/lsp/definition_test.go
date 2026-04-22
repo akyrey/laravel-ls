@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/akyrey/laravel-ls/internal/indexer/container"
-	"github.com/akyrey/laravel-ls/internal/indexer/eloquent"
+	"github.com/akyrey/laravel-lsp/internal/indexer/container"
+	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
 )
 
 func TestDefinition_ContainerLookup(t *testing.T) {

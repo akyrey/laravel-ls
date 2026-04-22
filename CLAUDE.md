@@ -4,7 +4,7 @@ Project context for Claude Code sessions.
 
 ## What is this project?
 
-`laravel-ls` is a Go LSP server that provides Laravel-specific
+`laravel-lsp` is a Go LSP server that provides Laravel-specific
 jump-to-definition and find-references for editors that lack a Laravel Idea
 equivalent (Neovim, VS Code). It indexes Laravel's runtime conventions that
 generic PHP language servers miss: service container bindings and Eloquent
@@ -15,13 +15,13 @@ model attribute accessors.
 - **Language**: Go 1.23+
 - **PHP parser**: `github.com/VKCOM/php-parser` v0.8.2 (VKCOM fork, PHP 8.1 config)
 - **LSP framework**: `github.com/tliron/glsp` v0.2.2, protocol 3.16, stdio transport
-- **Build**: `make build` (outputs `./laravel-ls`) or `go build -o laravel-ls ./cmd/laravel-lsp`
+- **Build**: `make build` (outputs `./laravel-lsp`) or `go build -o laravel-lsp ./cmd/laravel-lsp`
 - **Tests**: `make test` / `go test ./...`
 
 ## Commands
 
 ```bash
-make build        # build ./laravel-ls
+make build        # build ./laravel-lsp
 make test         # go test ./... -count=1
 make test-race    # go test -race ./... -count=1
 make vet          # go vet ./...

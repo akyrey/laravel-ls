@@ -7,7 +7,7 @@ import (
 
 	protocol "github.com/tliron/glsp/protocol_3_16"
 
-	"github.com/akyrey/laravel-ls/internal/phputil"
+	"github.com/akyrey/laravel-lsp/internal/phputil"
 )
 
 // boolPtr returns a pointer to b. Used when a protocol field requires *bool.
