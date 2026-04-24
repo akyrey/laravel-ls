@@ -7,16 +7,14 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/VKCOM/php-parser/pkg/ast"
-	"github.com/VKCOM/php-parser/pkg/visitor"
-	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
 
 	"github.com/akyrey/laravel-lsp/internal/indexer/container"
 	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
-	"github.com/akyrey/laravel-lsp/internal/phpparse"
+	"github.com/akyrey/laravel-lsp/internal/phpnode"
 	"github.com/akyrey/laravel-lsp/internal/phputil"
+	"github.com/akyrey/laravel-lsp/internal/phpwalk"
 )
 
 // referenceScanDirs lists subdirectories under root that are walked during a
@@ -58,14 +56,10 @@ func (s *Server) References(_ *glsp.Context, p *protocol.ReferenceParams) ([]pro
 
 // — Symbol identification —
 
-// refSymbol describes what we are searching for. Exactly one of the two flows
-// is set (the other is zero).
+// refSymbol describes what we are searching for.
 type refSymbol struct {
-	// Eloquent attribute: all $model->propName accesses where $model: modelFQN.
-	modelFQN phputil.FQN
-	propName string // snake_case
-
-	// Container abstract: all app(abstractFQN::class) usages.
+	modelFQN    phputil.FQN
+	propName    string // snake_case
 	abstractFQN phputil.FQN
 }
 
@@ -73,7 +67,6 @@ func (r *refSymbol) isEloquent() bool  { return r.modelFQN != "" && r.propName !
 func (r *refSymbol) isContainer() bool { return r.abstractFQN != "" }
 
 // identifySymbol determines what refSymbol is at offset in src.
-// Returns nil when no known symbol is found.
 func identifySymbol(
 	src []byte,
 	path string,
@@ -86,7 +79,7 @@ func identifySymbol(
 }
 
 // identifySymbolWithLoc is like identifySymbol but also returns the exact token
-// location. tokenLoc is zero when sym is nil.
+// location.
 func identifySymbolWithLoc(
 	src []byte,
 	path string,
@@ -94,77 +87,62 @@ func identifySymbolWithLoc(
 	bindings *container.BindingIndex,
 	models *eloquent.ModelIndex,
 ) (*refSymbol, phputil.Location) {
-	root, err := phpparse.Bytes(src, path)
-	if err != nil || root == nil {
+	tree, err := phpnode.ParseBytes(src)
+	if err != nil {
 		return nil, phputil.Location{}
 	}
-	fc := &phputil.FileContext{Path: path, Uses: make(phputil.UseMap)}
+	defer tree.Close()
+
 	sv := &symFinder{
-		fc:       fc,
+		src:      src,
+		fc:       &phputil.FileContext{Path: path, Uses: make(phputil.UseMap)},
 		offset:   offset,
 		bindings: bindings,
 		models:   models,
 	}
-	traverser.NewTraverser(sv).Traverse(root)
+	phpwalk.Walk(path, src, tree, sv)
 	return sv.sym, sv.tokenLoc
 }
 
-// symFinder is a single-pass visitor that identifies the symbol under the
-// cursor. It recognises the same patterns as defVisitor plus method declarations.
+// symFinder identifies the symbol under the cursor.
 type symFinder struct {
-	visitor.Null
+	phpwalk.NullVisitor
+	src      []byte
 	fc       *phputil.FileContext
 	offset   int
 	bindings *container.BindingIndex
 	models   *eloquent.ModelIndex
 
 	encClass     phputil.FQN
-	encMethod    *ast.StmtClassMethod
+	encMethod    *phpwalk.MethodInfo
 	assignedVars map[string]phputil.FQN
 
 	sym      *refSymbol
-	tokenLoc phputil.Location // exact range of the matched token
+	tokenLoc phputil.Location
 }
 
-func (v *symFinder) StmtNamespace(n *ast.StmtNamespace) {
-	if n.Name != nil {
-		v.fc.Namespace = phputil.FQN(phputil.NameToString(n.Name))
-	} else {
-		v.fc.Namespace = ""
-	}
+func (v *symFinder) VisitNamespace(ns string) { v.fc.Namespace = phputil.FQN(ns) }
+func (v *symFinder) VisitUseItem(alias, fqn string) {
+	v.fc.Uses[alias] = phputil.FQN(fqn)
 }
 
-func (v *symFinder) StmtUse(n *ast.StmtUseList) {
-	phputil.AddUsesToContext(v.fc, n.Uses, "")
-}
-
-func (v *symFinder) StmtGroupUse(n *ast.StmtGroupUseList) {
-	phputil.AddUsesToContext(v.fc, n.Uses, phputil.NameToString(n.Prefix))
-}
-
-func (v *symFinder) StmtClass(n *ast.StmtClass) {
-	pos := n.GetPosition()
-	if pos == nil || pos.StartPos > v.offset || v.offset >= pos.EndPos {
+func (v *symFinder) VisitClass(n phpwalk.ClassInfo) {
+	if !cursorOnNode(v.offset, n.Raw) {
 		return
 	}
-	v.encClass = phputil.ClassNodeFQN(n.Name, v.fc)
+	v.encClass = v.fc.Resolve(n.NameText)
 }
 
-func (v *symFinder) StmtClassMethod(n *ast.StmtClassMethod) {
-	pos := n.GetPosition()
-	if pos == nil || pos.StartPos > v.offset || v.offset >= pos.EndPos {
+func (v *symFinder) VisitClassMethod(n phpwalk.MethodInfo) {
+	if v.offset < n.StartByte || v.offset >= n.EndByte {
 		return
 	}
-	v.encMethod = n
+	v.encMethod = &n
 	v.assignedVars = collectAssignments(n, v.fc)
 
-	// Cursor on the method name itself → find the exposed attribute name.
-	nameID, ok := n.Name.(*ast.Identifier)
-	if !ok {
-		return
-	}
-	namePos := nameID.GetPosition()
-	if namePos == nil || v.offset < namePos.StartPos || v.offset >= namePos.EndPos {
+	// Cursor on the method name → find the exposed attribute name.
+	nameNode := n.Raw.ChildByFieldName("name")
+	if nameNode == nil || !cursorOnNode(v.offset, nameNode) {
 		return
 	}
 	if v.encClass == "" {
@@ -174,30 +152,27 @@ func (v *symFinder) StmtClassMethod(n *ast.StmtClassMethod) {
 	if cat == nil {
 		return
 	}
-	methodName := string(nameID.Value)
+	methodName := phpnode.NodeText(nameNode, v.src)
 	for exposed, attrs := range cat.ByExposed {
 		for _, a := range attrs {
 			if a.MethodName == methodName && a.Source == eloquent.SourceAST {
 				v.sym = &refSymbol{modelFQN: v.encClass, propName: exposed}
-				v.tokenLoc = phputil.FromPosition(v.fc.Path, namePos)
+				v.tokenLoc = phpnode.FromNode("", nameNode)
 				return
 			}
 		}
 	}
 }
 
-func (v *symFinder) ExprPropertyFetch(n *ast.ExprPropertyFetch) {
-	prop, ok := n.Prop.(*ast.Identifier)
-	if !ok {
+func (v *symFinder) VisitPropertyFetch(n phpwalk.PropertyFetchInfo) {
+	if v.offset < n.PropLocation.StartByte || v.offset >= n.PropLocation.EndByte {
 		return
 	}
-	propPos := prop.GetPosition()
-	if propPos == nil || v.offset < propPos.StartPos || v.offset >= propPos.EndPos {
-		return
+	var params []phpwalk.ParamInfo
+	if v.encMethod != nil {
+		params = v.encMethod.Params
 	}
-	propName := string(prop.Value)
-
-	modelFQN := resolveExprType(n.Var, v.encClass, v.encMethod, v.assignedVars, v.fc, v.models)
+	modelFQN := resolveExprType(n.VarRaw, n.Src, v.encClass, params, v.assignedVars, v.fc, v.models)
 	if modelFQN == "" {
 		return
 	}
@@ -205,33 +180,29 @@ func (v *symFinder) ExprPropertyFetch(n *ast.ExprPropertyFetch) {
 	if cat == nil {
 		return
 	}
-	if _, ok := cat.ByExposed[propName]; !ok {
+	if _, ok := cat.ByExposed[n.PropName]; !ok {
 		return
 	}
-	v.sym = &refSymbol{modelFQN: modelFQN, propName: propName}
-	v.tokenLoc = phputil.FromPosition(v.fc.Path, propPos)
+	v.sym = &refSymbol{modelFQN: modelFQN, propName: n.PropName}
+	v.tokenLoc = n.PropLocation
 }
 
-func (v *symFinder) ExprClassConstFetch(n *ast.ExprClassConstFetch) {
-	constID, ok := n.Const.(*ast.Identifier)
-	if !ok || string(constID.Value) != "class" {
+func (v *symFinder) VisitClassConstFetch(n phpwalk.ClassConstFetchInfo) {
+	if n.ConstName != "class" {
 		return
 	}
-	classPos := n.Class.GetPosition()
-	if classPos == nil || v.offset < classPos.StartPos || v.offset >= classPos.EndPos {
+	if v.offset < n.ClassLocation.StartByte || v.offset >= n.ClassLocation.EndByte {
 		return
 	}
-	fqn := v.fc.Resolve(phputil.NameToString(n.Class))
+	fqn := v.fc.Resolve(n.ClassName)
 	if len(v.bindings.Lookup(fqn)) > 0 {
 		v.sym = &refSymbol{abstractFQN: fqn}
-		v.tokenLoc = phputil.FromPosition(v.fc.Path, classPos)
+		v.tokenLoc = n.ClassLocation
 	}
 }
 
 // — Reference scanning —
 
-// scanReferences walks dirs (relative to root) and collects all locations
-// matching sym. Callers pass referenceScanDirs for production or "." for tests.
 func scanReferences(root string, dirs []string, sym *refSymbol, docs *DocumentStore, models *eloquent.ModelIndex) []protocol.Location {
 	var locs []protocol.Location
 	for _, dir := range dirs {
@@ -247,17 +218,20 @@ func scanReferences(root string, dirs []string, sym *refSymbol, docs *DocumentSt
 			if err != nil {
 				return nil
 			}
-			astRoot, err := phpparse.Bytes(src, path)
-			if err != nil || astRoot == nil {
+			tree, err := phpnode.ParseBytes(src)
+			if err != nil {
 				return nil
 			}
+			defer tree.Close()
+
 			rv := &refsVisitor{
 				fc:     &phputil.FileContext{Path: path, Uses: make(phputil.UseMap)},
 				sym:    sym,
 				path:   path,
+				src:    src,
 				models: models,
 			}
-			traverser.NewTraverser(rv).Traverse(astRoot)
+			phpwalk.Walk(path, src, tree, rv)
 			for _, loc := range rv.locations {
 				locs = append(locs, toLSPLocation(loc))
 			}
@@ -267,8 +241,6 @@ func scanReferences(root string, dirs []string, sym *refSymbol, docs *DocumentSt
 	return locs
 }
 
-// declarationLocations returns the declaration sites for sym (used when
-// includeDeclaration is true).
 func declarationLocations(sym *refSymbol, bindings *container.BindingIndex, models *eloquent.ModelIndex) []protocol.Location {
 	var locs []protocol.Location
 	if sym.isEloquent() {
@@ -295,74 +267,57 @@ func declarationLocations(sym *refSymbol, bindings *container.BindingIndex, mode
 	return locs
 }
 
-// — refsVisitor: file-level reference collector —
+// — refsVisitor —
 
 type refsVisitor struct {
-	visitor.Null
+	phpwalk.NullVisitor
 	fc           *phputil.FileContext
 	sym          *refSymbol
 	path         string
+	src          []byte
 	models       *eloquent.ModelIndex
 	encClass     phputil.FQN
-	encMethod    *ast.StmtClassMethod
+	encMethod    *phpwalk.MethodInfo
 	assignedVars map[string]phputil.FQN
 	locations    []phputil.Location
 }
 
-func (v *refsVisitor) StmtNamespace(n *ast.StmtNamespace) {
-	if n.Name != nil {
-		v.fc.Namespace = phputil.FQN(phputil.NameToString(n.Name))
-	} else {
-		v.fc.Namespace = ""
-	}
+func (v *refsVisitor) VisitNamespace(ns string) { v.fc.Namespace = phputil.FQN(ns) }
+func (v *refsVisitor) VisitUseItem(alias, fqn string) {
+	v.fc.Uses[alias] = phputil.FQN(fqn)
 }
 
-func (v *refsVisitor) StmtUse(n *ast.StmtUseList) {
-	phputil.AddUsesToContext(v.fc, n.Uses, "")
-}
-
-func (v *refsVisitor) StmtGroupUse(n *ast.StmtGroupUseList) {
-	phputil.AddUsesToContext(v.fc, n.Uses, phputil.NameToString(n.Prefix))
-}
-
-func (v *refsVisitor) StmtClass(n *ast.StmtClass) {
-	// Always update — refsVisitor scans the whole file, not just the cursor.
-	// Reset encMethod so it doesn't bleed from the previous class.
-	v.encClass = phputil.ClassNodeFQN(n.Name, v.fc)
+func (v *refsVisitor) VisitClass(n phpwalk.ClassInfo) {
+	v.encClass = v.fc.Resolve(n.NameText)
 	v.encMethod = nil
 }
 
-func (v *refsVisitor) StmtClassMethod(n *ast.StmtClassMethod) {
-	v.encMethod = n
+func (v *refsVisitor) VisitClassMethod(n phpwalk.MethodInfo) {
+	v.encMethod = &n
 	v.assignedVars = collectAssignments(n, v.fc)
 }
 
-func (v *refsVisitor) ExprPropertyFetch(n *ast.ExprPropertyFetch) {
-	if !v.sym.isEloquent() {
+func (v *refsVisitor) VisitPropertyFetch(n phpwalk.PropertyFetchInfo) {
+	if !v.sym.isEloquent() || n.PropName != v.sym.propName {
 		return
 	}
-	prop, ok := n.Prop.(*ast.Identifier)
-	if !ok || string(prop.Value) != v.sym.propName {
-		return
+	var params []phpwalk.ParamInfo
+	if v.encMethod != nil {
+		params = v.encMethod.Params
 	}
-	modelFQN := resolveExprType(n.Var, v.encClass, v.encMethod, v.assignedVars, v.fc, v.models)
+	modelFQN := resolveExprType(n.VarRaw, n.Src, v.encClass, params, v.assignedVars, v.fc, v.models)
 	if modelFQN != v.sym.modelFQN {
 		return
 	}
-	v.locations = append(v.locations, phputil.FromPosition(v.path, prop.GetPosition()))
+	v.locations = append(v.locations, n.PropLocation)
 }
 
-func (v *refsVisitor) ExprClassConstFetch(n *ast.ExprClassConstFetch) {
-	if !v.sym.isContainer() {
+func (v *refsVisitor) VisitClassConstFetch(n phpwalk.ClassConstFetchInfo) {
+	if !v.sym.isContainer() || n.ConstName != "class" {
 		return
 	}
-	constID, ok := n.Const.(*ast.Identifier)
-	if !ok || string(constID.Value) != "class" {
+	if v.fc.Resolve(n.ClassName) != v.sym.abstractFQN {
 		return
 	}
-	fqn := v.fc.Resolve(phputil.NameToString(n.Class))
-	if fqn != v.sym.abstractFQN {
-		return
-	}
-	v.locations = append(v.locations, phputil.FromPosition(v.path, n.GetPosition()))
+	v.locations = append(v.locations, phpnode.FromNode(v.path, n.Raw))
 }

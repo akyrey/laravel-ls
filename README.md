@@ -58,8 +58,8 @@ Jump from `$user->email_address` to the accessor declaration.
 
 ## Requirements
 
-- Go 1.23+
-- PHP 8.1+ project (Laravel 10+)
+- Go 1.23+ with CGo enabled (required by the tree-sitter PHP grammar)
+- PHP 8.1+ project (Laravel 10+); PHP 8.4 and 8.5 are fully supported
 
 ## Installation
 
@@ -92,53 +92,93 @@ vim.lsp.start({
 
 Use any extension that accepts a generic LSP server and point it at the binary.
 
+## Debug command
+
+Inspect what the server would index without starting an editor session:
+
+```bash
+# Text output (models + bindings)
+laravel-lsp debug /path/to/laravel-project
+
+# Flags
+laravel-lsp debug -models   /path/to/laravel-project   # models only
+laravel-lsp debug -bindings /path/to/laravel-project   # bindings only
+laravel-lsp debug -json     /path/to/laravel-project   # JSON output
+laravel-lsp debug -dirs app,src /path/to/project       # custom scan dirs
+laravel-lsp debug --help                               # full flag list
+```
+
+Example text output:
+
+```
+=== Models (2) ===
+
+App\Models\User
+  app/Models/User.php
+  email_address                  accessor  via emailAddress()
+  email_address                  $fillable
+  posts                          relation  → App\Models\Post
+
+=== Container bindings (3) ===
+
+App\Contracts\PaymentGateway
+  → App\Services\StripeGateway  [transient, call]
+  source: app/Providers/AppServiceProvider.php:16
+  target: app/Services/StripeGateway.php:7
+```
+
 ## Project structure
 
 ```
 cmd/laravel-lsp/
-  main.go                     # entry point — LSP server over stdio
+  main.go                   # entry point — LSP server or debug subcommand
+  debug.go                  # laravel-lsp debug — index inspection tool
 internal/
   indexer/
-    container/                # service-container binding indexer
-      index.go                # BindingIndex type + lookup/reindex methods
-      symbols.go              # cross-file class declaration map
-      scan.go                 # phase 1: build symbol table
-      extract.go              # phase 2: extract bindings from ServiceProviders
-      walk.go                 # Walk() + ReindexFile()
-    eloquent/                 # Eloquent model attribute indexer
-      catalog.go              # ModelCatalog + ModelIndex types
-      symbols.go              # cross-file class declaration map
-      scan.go                 # phase 1: build symbol table
-      attributes.go           # modern/legacy accessors, mutators, relationships
-      arrays.go               # $fillable / $casts / $appends / $hidden
-      extract.go              # per-file catalog extraction
-      walk.go                 # Walk() + ReindexFile()
+    container/              # service-container binding indexer
+      index.go              # BindingIndex type
+      symbols.go            # cross-file class declaration map
+      scan.go               # phase 1: build symbol table
+      extract.go            # phase 2: extract bindings from ServiceProviders
+      walk.go               # Walk() + ReindexFile()
+    eloquent/               # Eloquent model attribute indexer
+      catalog.go            # ModelCatalog + ModelIndex types
+      symbols.go            # cross-file class declaration map
+      scan.go               # phase 1: build symbol table
+      attributes.go         # modern/legacy accessors, mutators, relationships
+      arrays.go             # $fillable / $casts / $appends / $hidden
+      extract.go            # per-file catalog extraction
+      walk.go               # Walk() + ReindexFile()
     idehelper/
-      merge.go                # _ide_helper_models.php stub parser
+      merge.go              # _ide_helper_models.php stub parser
   lsp/
-    server.go                 # Server struct — owns all state and handler methods
-    definition.go             # textDocument/definition
-    references.go             # textDocument/references
-    hover.go                  # textDocument/hover
-    completion.go             # textDocument/completion
-    rename.go                 # textDocument/rename + prepareRename
-    diagnostics.go            # textDocument/publishDiagnostics
-    codeaction.go             # textDocument/codeAction
-    symbols.go                # textDocument/documentSymbol
-    scope.go                  # $var → FQN inference (assignments + typed params)
-    documents.go              # DocumentStore — in-memory cache with disk fallback
-    uri.go                    # URI/path conversion, UTF-16 position helpers
-  phpparse/
-    parse.go                  # shared PHP 8.1 parse helpers
+    server.go               # Server struct — owns all state and handler methods
+    definition.go           # textDocument/definition
+    references.go           # textDocument/references
+    hover.go                # textDocument/hover
+    completion.go           # textDocument/completion
+    rename.go               # textDocument/rename + prepareRename
+    diagnostics.go          # textDocument/publishDiagnostics
+    codeaction.go           # textDocument/codeAction
+    symbols.go              # textDocument/documentSymbol
+    scope.go                # $var → FQN inference (assignments + typed params)
+    documents.go            # DocumentStore — in-memory cache with disk fallback
+    uri.go                  # URI/path conversion, UTF-16 position helpers
+  phpnode/
+    parse.go                # ParseBytes() / ParseFile() + FromNode() using tree-sitter
+  phpwalk/
+    visitor.go              # Visitor interface, NullVisitor, all Info types
+    walk.go                 # Walk(path, src, tree, v) — depth-first CST traversal
+    names.go                # ClassConstFQN, UnwrapTypeName, ArgExprs helpers
   phputil/
-    fqn.go                    # FQN type, UseMap, FileContext.Resolve()
-    case.go                   # Snake/Studly/Camel — mirrors Illuminate\Support\Str
-    ast.go                    # NameToString, ClassName helpers
-    location.go               # Location type + FromPosition()
+    fqn.go                  # FQN type, UseMap, FileContext + Resolve()
+    case.go                 # Snake/Studly/Camel — mirrors Illuminate\Support\Str
+    ast.go                  # ClassFQN, LastSegment helpers
+    location.go             # Location type (parser-agnostic byte-offset struct)
 testdata/
-  bindings/                   # PHP fixtures for container indexer tests
-  models/                     # PHP fixtures for Eloquent indexer tests
-  idehelper/                  # _ide_helper_models.php fixture
+  bindings/                 # PHP fixtures for container indexer tests
+  models/                   # PHP fixtures for Eloquent indexer tests
+  idehelper/                # _ide_helper_models.php fixture
 ```
 
 ## Development
@@ -164,6 +204,11 @@ touches `tliron/glsp` protocol types.
 1. Symbol scan — walk all `.php` files, build a class FQN → extends/location map
 2. Extraction — re-walk files in the target class hierarchy and emit index entries
 
+**Visitor pattern** (`phpwalk`): implement `phpwalk.Visitor`, embed
+`phpwalk.NullVisitor` for no-op defaults, and call `phpwalk.Walk(path, src,
+tree, v)` for a depth-first pre-order traversal. Each node kind gets a typed
+callback (e.g. `VisitClass(ClassInfo)`, `VisitPropertyFetch(PropertyFetchInfo)`).
+
 **Case translation** mirrors `Illuminate\Support\Str` exactly. `snake()` uses a
 per-character lookahead so `"HTMLParser"` → `"h_t_m_l_parser"`.
 
@@ -181,9 +226,12 @@ pairs for files with emoji or other non-BMP characters.
 
 ## PHP parser
 
-Uses [`github.com/VKCOM/php-parser`](https://github.com/VKCOM/php-parser) v0.8.2,
-pinned to PHP 8.1 config. Files using PHP 8.2+ syntax that the parser cannot
-handle are logged to stderr and skipped; the partial AST is still processed.
+Uses [`tree-sitter-php`](https://github.com/tree-sitter/tree-sitter-php) v0.24.2
+via [`go-tree-sitter`](https://github.com/tree-sitter/go-tree-sitter) v0.25.0
+(CGo). The grammar tracks the PHP language and supports PHP 5 through 8.x,
+including PHP 8.4 property hooks and asymmetric visibility. tree-sitter always
+produces a tree with full error recovery — no files are skipped due to parser
+version limits.
 
 ## License
 

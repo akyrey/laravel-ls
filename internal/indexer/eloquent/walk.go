@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
-	"github.com/akyrey/laravel-lsp/internal/phpparse"
+	"github.com/akyrey/laravel-lsp/internal/phpnode"
+	"github.com/akyrey/laravel-lsp/internal/phpwalk"
 )
 
 // ReindexFile updates idx for a single changed file without re-walking the
@@ -24,7 +24,7 @@ func ReindexFile(path string, old *ModelIndex) (*ModelIndex, error) {
 	newSyms := old.syms.clone()
 	newSyms.removeFile(path)
 
-	astRoot, err := phpparse.File(path)
+	src, tree, err := phpnode.ParseFile(path)
 	if err != nil {
 		// File deleted or parse error — remove its entries, keep the rest.
 		newIdx := NewModelIndex()
@@ -36,9 +36,10 @@ func ReindexFile(path string, old *ModelIndex) (*ModelIndex, error) {
 		}
 		return newIdx, nil
 	}
+	defer tree.Close()
 
 	sv := newScanVisitor(path, newSyms)
-	traverser.NewTraverser(sv).Traverse(astRoot)
+	phpwalk.Walk(path, src, tree, sv)
 	newSyms.resolveModels()
 
 	newIdx := NewModelIndex()
@@ -48,7 +49,7 @@ func ReindexFile(path string, old *ModelIndex) (*ModelIndex, error) {
 			newIdx.byFQN[fqn] = cat
 		}
 	}
-	for _, catalog := range extractFileModels(path, astRoot, newSyms) {
+	for _, catalog := range extractFileModels(path, src, tree, newSyms) {
 		newIdx.Add(catalog)
 	}
 	return newIdx, nil
@@ -77,15 +78,17 @@ func Walk(root string, dirs []string) (*ModelIndex, error) {
 			if d.IsDir() || !strings.HasSuffix(path, ".php") {
 				return nil
 			}
-			astRoot, err := phpparse.File(path)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "laravel-lsp: skipping %s: %v\n", path, err)
+			src, tree, parseErr := phpnode.ParseFile(path)
+			if parseErr != nil {
+				fmt.Fprintf(os.Stderr, "laravel-lsp: skipping %s: %v\n", path, parseErr)
 				return nil
 			}
-			sv := newScanVisitor(path, syms)
-			traverser.NewTraverser(sv).Traverse(astRoot)
+			defer tree.Close()
 
-			for _, catalog := range extractFileModels(path, astRoot, syms) {
+			sv := newScanVisitor(path, syms)
+			phpwalk.Walk(path, src, tree, sv)
+
+			for _, catalog := range extractFileModels(path, src, tree, syms) {
 				idx.Add(catalog)
 			}
 			return nil

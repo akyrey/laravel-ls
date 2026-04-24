@@ -4,11 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/VKCOM/php-parser/pkg/ast"
-	"github.com/VKCOM/php-parser/pkg/visitor"
-	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
-
-	"github.com/akyrey/laravel-lsp/internal/phpparse"
+	"github.com/akyrey/laravel-lsp/internal/phpnode"
+	"github.com/akyrey/laravel-lsp/internal/phpwalk"
 )
 
 func TestDebugDump(t *testing.T) {
@@ -25,12 +22,15 @@ func TestDebugDump(t *testing.T) {
 }
 
 func TestDebugExtract(t *testing.T) {
-	root, err := phpparse.File("../../../testdata/bindings/AppServiceProvider.php")
+	path := "../../../testdata/bindings/AppServiceProvider.php"
+	src, tree, err := phpnode.ParseFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer tree.Close()
+
 	syms, _ := buildSymbolTable("../../../testdata/bindings", []string{"."})
-	bindings := extractFileBindings("../../../testdata/bindings/AppServiceProvider.php", root, syms)
+	bindings := extractFileBindings(path, src, tree, syms)
 	fmt.Printf("AppServiceProvider bindings: %d\n", len(bindings))
 	for _, b := range bindings {
 		fmt.Printf("  %+v\n", b)
@@ -49,32 +49,35 @@ func TestDebugSymbols(t *testing.T) {
 	}
 }
 
-// countingVisitor counts how many StmtClass/StmtInterface nodes it sees.
+// countingVisitor counts how many of each node kind it sees.
 type countingVisitor struct {
-	visitor.Null
+	phpwalk.NullVisitor
 	classes    int
 	interfaces int
 	uses       int
 	methods    int
 }
 
-func (v *countingVisitor) StmtClass(_ *ast.StmtClass)         { v.classes++ }
-func (v *countingVisitor) StmtInterface(_ *ast.StmtInterface) { v.interfaces++ }
-func (v *countingVisitor) StmtUse(_ *ast.StmtUseList)         { v.uses++ }
-func (v *countingVisitor) ExprMethodCall(_ *ast.ExprMethodCall) { v.methods++ }
+func (v *countingVisitor) VisitClass(phpwalk.ClassInfo)          { v.classes++ }
+func (v *countingVisitor) VisitInterface(phpwalk.InterfaceInfo)  { v.interfaces++ }
+func (v *countingVisitor) VisitUseItem(string, string)           { v.uses++ }
+func (v *countingVisitor) VisitMethodCall(phpwalk.MethodCallInfo) { v.methods++ }
 
 func TestDebugTraversal(t *testing.T) {
-	root, err := phpparse.File("../../../testdata/bindings/AppServiceProvider.php")
+	path := "../../../testdata/bindings/AppServiceProvider.php"
+	src, tree, err := phpnode.ParseFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer tree.Close()
+
 	cv := &countingVisitor{}
-	traverser.NewTraverser(cv).Traverse(root)
+	phpwalk.Walk("", src, tree, cv)
 	fmt.Printf("classes=%d interfaces=%d uses=%d methods=%d\n", cv.classes, cv.interfaces, cv.uses, cv.methods)
 	if cv.classes == 0 {
-		t.Error("no StmtClass nodes visited")
+		t.Error("no class nodes visited")
 	}
 	if cv.uses == 0 {
-		t.Error("no StmtUse nodes visited")
+		t.Error("no use items visited")
 	}
 }

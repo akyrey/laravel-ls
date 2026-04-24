@@ -3,15 +3,13 @@ package lsp
 import (
 	"fmt"
 
-	"github.com/VKCOM/php-parser/pkg/ast"
-	"github.com/VKCOM/php-parser/pkg/visitor"
-	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
 
 	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
-	"github.com/akyrey/laravel-lsp/internal/phpparse"
+	"github.com/akyrey/laravel-lsp/internal/phpnode"
 	"github.com/akyrey/laravel-lsp/internal/phputil"
+	"github.com/akyrey/laravel-lsp/internal/phpwalk"
 )
 
 // diagSource is the source label shown in the editor for diagnostics.
@@ -36,66 +34,55 @@ func publishDiagnostics(ctx *glsp.Context, uri protocol.DocumentUri, src []byte,
 // collectDiagnostics returns Warning diagnostics for every $model->propName
 // access where propName is not found in the model's attribute catalog.
 func collectDiagnostics(src []byte, path string, models *eloquent.ModelIndex) []protocol.Diagnostic {
-	astRoot, err := phpparse.Bytes(src, path)
-	if err != nil || astRoot == nil {
+	tree, err := phpnode.ParseBytes(src)
+	if err != nil {
 		return nil
 	}
+	defer tree.Close()
+
 	dv := &diagVisitor{
 		fc:     &phputil.FileContext{Path: path, Uses: make(phputil.UseMap)},
 		path:   path,
 		src:    src,
 		models: models,
 	}
-	traverser.NewTraverser(dv).Traverse(astRoot)
+	phpwalk.Walk(path, src, tree, dv)
 	return dv.diags
 }
 
 type diagVisitor struct {
-	visitor.Null
+	phpwalk.NullVisitor
 	fc           *phputil.FileContext
 	path         string
 	src          []byte
 	models       *eloquent.ModelIndex
 	encClass     phputil.FQN
-	encMethod    *ast.StmtClassMethod
+	encMethod    *phpwalk.MethodInfo
 	assignedVars map[string]phputil.FQN
 	diags        []protocol.Diagnostic
 }
 
-func (v *diagVisitor) StmtNamespace(n *ast.StmtNamespace) {
-	if n.Name != nil {
-		v.fc.Namespace = phputil.FQN(phputil.NameToString(n.Name))
-	} else {
-		v.fc.Namespace = ""
-	}
+func (v *diagVisitor) VisitNamespace(ns string) { v.fc.Namespace = phputil.FQN(ns) }
+func (v *diagVisitor) VisitUseItem(alias, fqn string) {
+	v.fc.Uses[alias] = phputil.FQN(fqn)
 }
 
-func (v *diagVisitor) StmtUse(n *ast.StmtUseList) {
-	phputil.AddUsesToContext(v.fc, n.Uses, "")
-}
-
-func (v *diagVisitor) StmtGroupUse(n *ast.StmtGroupUseList) {
-	phputil.AddUsesToContext(v.fc, n.Uses, phputil.NameToString(n.Prefix))
-}
-
-func (v *diagVisitor) StmtClass(n *ast.StmtClass) {
-	v.encClass = phputil.ClassNodeFQN(n.Name, v.fc)
+func (v *diagVisitor) VisitClass(n phpwalk.ClassInfo) {
+	v.encClass = v.fc.Resolve(n.NameText)
 	v.encMethod = nil
 }
 
-func (v *diagVisitor) StmtClassMethod(n *ast.StmtClassMethod) {
-	v.encMethod = n
+func (v *diagVisitor) VisitClassMethod(n phpwalk.MethodInfo) {
+	v.encMethod = &n
 	v.assignedVars = collectAssignments(n, v.fc)
 }
 
-func (v *diagVisitor) ExprPropertyFetch(n *ast.ExprPropertyFetch) {
-	prop, ok := n.Prop.(*ast.Identifier)
-	if !ok {
-		return
+func (v *diagVisitor) VisitPropertyFetch(n phpwalk.PropertyFetchInfo) {
+	var params []phpwalk.ParamInfo
+	if v.encMethod != nil {
+		params = v.encMethod.Params
 	}
-	propName := string(prop.Value)
-
-	modelFQN := resolveExprType(n.Var, v.encClass, v.encMethod, v.assignedVars, v.fc, v.models)
+	modelFQN := resolveExprType(n.VarRaw, n.Src, v.encClass, params, v.assignedVars, v.fc, v.models)
 	if modelFQN == "" {
 		return
 	}
@@ -103,22 +90,16 @@ func (v *diagVisitor) ExprPropertyFetch(n *ast.ExprPropertyFetch) {
 	if cat == nil {
 		return
 	}
-	if _, known := cat.ByExposed[propName]; known {
+	if _, known := cat.ByExposed[n.PropName]; known {
 		return
 	}
 
-	// Unknown property on a known model — emit a warning.
-	propPos := prop.GetPosition()
-	if propPos == nil {
-		return
-	}
-	loc := phputil.FromPosition(v.path, propPos)
 	sev := protocol.DiagnosticSeverityWarning
 	src := diagSource
 	v.diags = append(v.diags, protocol.Diagnostic{
-		Range:    toLSPRange(loc, v.src),
+		Range:    toLSPRange(n.PropLocation, v.src),
 		Severity: &sev,
 		Source:   &src,
-		Message:  fmt.Sprintf("unknown property '%s' on %s", propName, modelFQN),
+		Message:  fmt.Sprintf("unknown property '%s' on %s", n.PropName, modelFQN),
 	})
 }

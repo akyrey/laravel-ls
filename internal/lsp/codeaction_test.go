@@ -6,9 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
 	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
-	"github.com/akyrey/laravel-lsp/internal/phpparse"
 	protocol "github.com/tliron/glsp/protocol_3_16"
 )
 
@@ -40,11 +38,9 @@ func TestBuildAddToFillableEdit_NonEmptyArray(t *testing.T) {
 	}
 
 	te := edits[0]
-	// Insertion is a point edit (Start == End).
 	if te.Range.Start != te.Range.End {
 		t.Errorf("expected point insertion, got range %v", te.Range)
 	}
-	// NewText should contain the quoted property name with a leading comma.
 	if !strings.Contains(te.NewText, "'phone_number'") {
 		t.Errorf("NewText %q does not contain 'phone_number'", te.NewText)
 	}
@@ -54,7 +50,6 @@ func TestBuildAddToFillableEdit_NonEmptyArray(t *testing.T) {
 }
 
 func TestBuildAddToFillableEdit_NoFillable(t *testing.T) {
-	// A file with no $fillable → should return nil.
 	src := []byte(`<?php
 namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
@@ -71,7 +66,9 @@ class User {
     protected $fillable = [];
 }`)
 	fv := newFillableVisitor("/fake.php")
-	traverseWithFillableVisitor(fv, src)
+	if err := fv.scan(src); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
 
 	ins, ok := fv.insertions["fillable"]
 	if !ok || ins.insertByte < 0 {
@@ -92,7 +89,9 @@ class User {
     protected $fillable = ['name', 'email'];
 }`)
 	fv := newFillableVisitor("/fake.php")
-	traverseWithFillableVisitor(fv, src)
+	if err := fv.scan(src); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
 
 	ins, ok := fv.insertions["fillable"]
 	if !ok || ins.insertByte < 0 {
@@ -108,23 +107,12 @@ class User {
 }
 
 func TestCodeAction_NoActionsForUnknownSource(t *testing.T) {
-	// Diagnostics from other sources must be ignored.
 	diags := []protocol.Diagnostic{
 		{Message: "unknown property 'foo' on App\\Models\\User"},
-		// Source is nil — not from laravel-lsp, so CodeAction should skip it.
 	}
-	_ = diags // The handler checks Source != nil, so no actions expected.
-	// Smoke test: building an edit for empty source should return nil.
+	_ = diags
 	edit := buildAddToFillableEdit("/nonexistent.php", []byte{}, "x")
 	if edit != nil {
 		t.Error("expected nil edit for empty src")
 	}
-}
-
-func traverseWithFillableVisitor(fv *fillableVisitor, src []byte) {
-	astRoot, err := phpparse.Bytes(src, fv.path)
-	if err != nil || astRoot == nil {
-		return
-	}
-	traverser.NewTraverser(fv).Traverse(astRoot)
 }

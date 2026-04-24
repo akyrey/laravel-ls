@@ -6,20 +6,16 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/VKCOM/php-parser/pkg/ast"
-	"github.com/VKCOM/php-parser/pkg/visitor"
-	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
 
 	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
-	"github.com/akyrey/laravel-lsp/internal/phpparse"
+	"github.com/akyrey/laravel-lsp/internal/phpnode"
 	"github.com/akyrey/laravel-lsp/internal/phputil"
+	"github.com/akyrey/laravel-lsp/internal/phpwalk"
 )
 
-// PrepareRename validates that the cursor is on a renameable symbol and returns
-// the range of the token to rename. Returns nil when renaming is not supported
-// at the position (non-Eloquent symbol, unknown position, etc.).
+// PrepareRename validates that the cursor is on a renameable symbol.
 func (s *Server) PrepareRename(_ *glsp.Context, p *protocol.PrepareRenameParams) (any, error) {
 	s.mu.RLock()
 	bindings, models := s.bindings, s.models
@@ -46,15 +42,12 @@ func (s *Server) PrepareRename(_ *glsp.Context, p *protocol.PrepareRenameParams)
 }
 
 // textReplacement pairs a source location with the replacement text.
-// loc must point to the exact token (StartByte inclusive, EndByte inclusive).
 type textReplacement struct {
 	loc     phputil.Location
 	newText string
 }
 
 // Rename handles textDocument/rename requests.
-// Only Eloquent property renames are supported; container abstract rename is
-// out of scope (it requires a full PHP class rename).
 func (s *Server) Rename(_ *glsp.Context, p *protocol.RenameParams) (*protocol.WorkspaceEdit, error) {
 	s.mu.RLock()
 	bindings, models, root := s.bindings, s.models, s.root
@@ -76,13 +69,8 @@ func (s *Server) Rename(_ *glsp.Context, p *protocol.RenameParams) (*protocol.Wo
 		return nil, nil
 	}
 
-	newName := p.NewName
-
-	// Reference sites across app/ and routes/.
-	reps := scanRenameRefs(root, referenceScanDirs, sym, s.docs, models, newName)
-
-	// Declaration sites from the model file(s).
-	reps = append(reps, collectDeclReplacements(sym, models, newName, s.docs)...)
+	reps := scanRenameRefs(root, referenceScanDirs, sym, s.docs, models, p.NewName)
+	reps = append(reps, collectDeclReplacements(sym, models, p.NewName, s.docs)...)
 
 	if len(reps) == 0 {
 		return nil, nil
@@ -92,8 +80,6 @@ func (s *Server) Rename(_ *glsp.Context, p *protocol.RenameParams) (*protocol.Wo
 
 // — Reference-site scanning —
 
-// scanRenameRefs walks dirs under root and records (loc, newName) for every
-// $model->propName access that matches sym.
 func scanRenameRefs(
 	root string,
 	dirs []string,
@@ -116,18 +102,21 @@ func scanRenameRefs(
 			if err != nil {
 				return nil
 			}
-			astRoot, err := phpparse.Bytes(src, path)
-			if err != nil || astRoot == nil {
+			tree, parseErr := phpnode.ParseBytes(src)
+			if parseErr != nil {
 				return nil
 			}
+			defer tree.Close()
+
 			rv := &renameRefsVisitor{
 				fc:      &phputil.FileContext{Path: path, Uses: make(phputil.UseMap)},
 				sym:     sym,
 				path:    path,
+				src:     src,
 				models:  models,
 				newName: newName,
 			}
-			traverser.NewTraverser(rv).Traverse(astRoot)
+			phpwalk.Walk(path, src, tree, rv)
 			reps = append(reps, rv.replacements...)
 			return nil
 		})
@@ -136,65 +125,54 @@ func scanRenameRefs(
 }
 
 type renameRefsVisitor struct {
-	visitor.Null
+	phpwalk.NullVisitor
 	fc           *phputil.FileContext
 	sym          *refSymbol
 	path         string
+	src          []byte
 	models       *eloquent.ModelIndex
 	newName      string
 	encClass     phputil.FQN
-	encMethod    *ast.StmtClassMethod
+	encMethod    *phpwalk.MethodInfo
 	assignedVars map[string]phputil.FQN
 	replacements []textReplacement
 }
 
-func (v *renameRefsVisitor) StmtNamespace(n *ast.StmtNamespace) {
-	if n.Name != nil {
-		v.fc.Namespace = phputil.FQN(phputil.NameToString(n.Name))
-	} else {
-		v.fc.Namespace = ""
-	}
+func (v *renameRefsVisitor) VisitNamespace(ns string) { v.fc.Namespace = phputil.FQN(ns) }
+func (v *renameRefsVisitor) VisitUseItem(alias, fqn string) {
+	v.fc.Uses[alias] = phputil.FQN(fqn)
 }
 
-func (v *renameRefsVisitor) StmtUse(n *ast.StmtUseList) {
-	phputil.AddUsesToContext(v.fc, n.Uses, "")
-}
-
-func (v *renameRefsVisitor) StmtGroupUse(n *ast.StmtGroupUseList) {
-	phputil.AddUsesToContext(v.fc, n.Uses, phputil.NameToString(n.Prefix))
-}
-
-func (v *renameRefsVisitor) StmtClass(n *ast.StmtClass) {
-	v.encClass = phputil.ClassNodeFQN(n.Name, v.fc)
+func (v *renameRefsVisitor) VisitClass(n phpwalk.ClassInfo) {
+	v.encClass = v.fc.Resolve(n.NameText)
 	v.encMethod = nil
 }
 
-func (v *renameRefsVisitor) StmtClassMethod(n *ast.StmtClassMethod) {
-	v.encMethod = n
+func (v *renameRefsVisitor) VisitClassMethod(n phpwalk.MethodInfo) {
+	v.encMethod = &n
 	v.assignedVars = collectAssignments(n, v.fc)
 }
 
-func (v *renameRefsVisitor) ExprPropertyFetch(n *ast.ExprPropertyFetch) {
-	prop, ok := n.Prop.(*ast.Identifier)
-	if !ok || string(prop.Value) != v.sym.propName {
+func (v *renameRefsVisitor) VisitPropertyFetch(n phpwalk.PropertyFetchInfo) {
+	if n.PropName != v.sym.propName {
 		return
 	}
-	modelFQN := resolveExprType(n.Var, v.encClass, v.encMethod, v.assignedVars, v.fc, v.models)
+	var params []phpwalk.ParamInfo
+	if v.encMethod != nil {
+		params = v.encMethod.Params
+	}
+	modelFQN := resolveExprType(n.VarRaw, n.Src, v.encClass, params, v.assignedVars, v.fc, v.models)
 	if modelFQN != v.sym.modelFQN {
 		return
 	}
 	v.replacements = append(v.replacements, textReplacement{
-		loc:     phputil.FromPosition(v.path, prop.GetPosition()),
+		loc:     n.PropLocation,
 		newText: v.newName,
 	})
 }
 
 // — Declaration-site renames —
 
-// collectDeclReplacements walks the model file(s) and returns replacements for
-// method name tokens that declare sym.propName. Array entries ($fillable, etc.)
-// are NOT renamed because their stored location points to the whole property
-// list, not the individual string literal.
 func collectDeclReplacements(
 	sym *refSymbol,
 	models *eloquent.ModelIndex,
@@ -210,7 +188,6 @@ func collectDeclReplacements(
 		return nil
 	}
 
-	// Collect unique (file, methodName, kind) triples for method-based declarations.
 	seen := make(map[string]bool)
 	var entries []declMethodEntry
 	for _, a := range attrs {
@@ -233,7 +210,6 @@ func collectDeclReplacements(
 		return nil
 	}
 
-	// Group by file so we parse each file once.
 	byFile := make(map[string][]declMethodEntry)
 	for _, e := range entries {
 		byFile[e.path] = append(byFile[e.path], e)
@@ -245,49 +221,49 @@ func collectDeclReplacements(
 		if err != nil {
 			continue
 		}
-		astRoot, err := phpparse.Bytes(src, filePath)
-		if err != nil || astRoot == nil {
+		tree, err := phpnode.ParseBytes(src)
+		if err != nil {
 			continue
 		}
+		defer tree.Close()
+
 		mv := &declRenameVisitor{
 			path:    filePath,
+			src:     src,
 			entries: fileEntries,
 			newName: newName,
 		}
-		traverser.NewTraverser(mv).Traverse(astRoot)
+		phpwalk.Walk(filePath, src, tree, mv)
 		reps = append(reps, mv.replacements...)
 	}
 	return reps
 }
 
-// declMethodEntry records a method-based declaration to be renamed.
 type declMethodEntry struct {
 	path, methodName string
 	kind             eloquent.AttributeKind
 }
 
-// declRenameVisitor finds method name identifier tokens for known declarations
-// and records (nameToken location, new method name) replacements.
 type declRenameVisitor struct {
-	visitor.Null
+	phpwalk.NullVisitor
 	path         string
+	src          []byte
 	entries      []declMethodEntry
 	newName      string
 	replacements []textReplacement
 }
 
-func (v *declRenameVisitor) StmtClassMethod(n *ast.StmtClassMethod) {
-	nameID, ok := n.Name.(*ast.Identifier)
-	if !ok {
-		return
-	}
-	methodName := string(nameID.Value)
+func (v *declRenameVisitor) VisitClassMethod(n phpwalk.MethodInfo) {
 	for _, e := range v.entries {
-		if e.methodName != methodName {
+		if e.methodName != n.Name {
+			continue
+		}
+		nameNode := n.Raw.ChildByFieldName("name")
+		if nameNode == nil {
 			continue
 		}
 		v.replacements = append(v.replacements, textReplacement{
-			loc:     phputil.FromPosition(v.path, nameID.GetPosition()),
+			loc:     phpnode.FromNode(v.path, nameNode),
 			newText: methodNameFor(e.kind, v.newName),
 		})
 		return
@@ -305,8 +281,6 @@ func methodNameFor(kind eloquent.AttributeKind, newName string) string {
 	case eloquent.LegacyMutator:
 		return "set" + phputil.Studly(newName) + "Attribute"
 	case eloquent.Relationship:
-		// Relationships use the method name directly as ExposedName; the new
-		// name is used as-is (camelCase by convention, but the user decides).
 		return newName
 	}
 	return newName
@@ -314,7 +288,6 @@ func methodNameFor(kind eloquent.AttributeKind, newName string) string {
 
 // — WorkspaceEdit builder —
 
-// buildWorkspaceEdit groups replacements by file URI and returns a WorkspaceEdit.
 func buildWorkspaceEdit(reps []textReplacement) *protocol.WorkspaceEdit {
 	changes := make(map[protocol.DocumentUri][]protocol.TextEdit)
 	srcCache := make(map[string][]byte)

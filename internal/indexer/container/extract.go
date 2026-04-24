@@ -1,10 +1,11 @@
 package container
 
 import (
-	"github.com/VKCOM/php-parser/pkg/ast"
-	"github.com/VKCOM/php-parser/pkg/visitor"
-	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
+	ts "github.com/tree-sitter/go-tree-sitter"
+
+	"github.com/akyrey/laravel-lsp/internal/phpnode"
 	"github.com/akyrey/laravel-lsp/internal/phputil"
+	"github.com/akyrey/laravel-lsp/internal/phpwalk"
 )
 
 // bindingMethods maps ServiceProvider method names to their Lifetime string.
@@ -25,16 +26,16 @@ var bindingAttributes = map[phputil.FQN]string{
 // appFacadeFQN is the Laravel App facade.
 const appFacadeFQN phputil.FQN = "Illuminate\\Support\\Facades\\App"
 
-// extractFileBindings parses path and extracts all Binding records it can
-// determine syntactically. It uses syms to check ServiceProvider inheritance
-// and to resolve Binding.Location (the concrete class declaration site).
-func extractFileBindings(path string, root ast.Vertex, syms *symbolTable) []Binding {
+// extractFileBindings parses path and extracts all Binding records.
+// src and tree are the already-parsed result; tree is NOT closed here.
+func extractFileBindings(path string, src []byte, tree *ts.Tree, syms *symbolTable) []Binding {
 	ev := &extractVisitor{
 		path: path,
 		fc:   &phputil.FileContext{Path: path, Uses: make(phputil.UseMap)},
 		syms: syms,
 	}
-	traverser.NewTraverser(ev).Traverse(root)
+	phpwalk.Walk(path, src, tree, ev)
+
 	// Fill in Binding.Location for any concrete FQN we know about.
 	for i := range ev.bindings {
 		if ev.bindings[i].Concrete != "" && ev.bindings[i].Location.Zero() {
@@ -44,168 +45,161 @@ func extractFileBindings(path string, root ast.Vertex, syms *symbolTable) []Bind
 	return ev.bindings
 }
 
-// extractVisitor is the top-level per-file binding extraction visitor.
-// It builds a FileContext as it goes, then delegates to sub-visitors for
-// ServiceProvider class bodies.
-type extractVisitor struct {
-	visitor.Null
+// — extractVisitor ────────────────────────────────────────────────────────
 
+type extractVisitor struct {
+	phpwalk.NullVisitor
 	path     string
 	fc       *phputil.FileContext
 	syms     *symbolTable
 	bindings []Binding
 }
 
-func (v *extractVisitor) StmtNamespace(n *ast.StmtNamespace) {
-	if n.Name != nil {
-		v.fc.Namespace = phputil.FQN(phputil.NameToString(n.Name))
-	} else {
-		v.fc.Namespace = ""
-	}
+func (v *extractVisitor) VisitNamespace(ns string) { v.fc.Namespace = phputil.FQN(ns) }
+func (v *extractVisitor) VisitUseItem(alias, fqn string) {
+	v.fc.Uses[alias] = phputil.FQN(fqn)
 }
 
-func (v *extractVisitor) StmtUse(n *ast.StmtUseList) {
-	phputil.AddUsesToContext(v.fc, n.Uses, "")
-}
-
-func (v *extractVisitor) StmtGroupUse(n *ast.StmtGroupUseList) {
-	prefix := phputil.NameToString(n.Prefix)
-	phputil.AddUsesToContext(v.fc, n.Uses, prefix)
-}
-
-func (v *extractVisitor) StmtClass(n *ast.StmtClass) {
-	fqn := phputil.ClassNodeFQN(n.Name, v.fc)
+func (v *extractVisitor) VisitClass(n phpwalk.ClassInfo) {
+	fqn := v.fc.Resolve(n.NameText)
 
 	// PHP 8 attribute bindings on the class itself.
-	v.bindings = append(v.bindings, extractAttrBindings(n.AttrGroups, fqn, v.fc, v.path)...)
+	v.bindings = append(v.bindings, extractAttrBindings(n.Raw, n.Src, fqn, v.fc, v.path)...)
 
-	// ServiceProvider binding calls in method bodies.
+	// ServiceProvider binding calls inside method bodies.
 	if fqn != "" && v.syms.isServiceProvider(fqn) {
 		cv := &bindingCallVisitor{fc: v.fc, path: v.path}
-		tr := traverser.NewTraverser(cv)
-		for _, stmt := range n.Stmts {
-			tr.Traverse(stmt)
+		if bodyNode := n.Raw.ChildByFieldName("body"); bodyNode != nil {
+			phpwalk.WalkNode(v.path, n.Src, bodyNode, cv)
 		}
 		v.bindings = append(v.bindings, cv.bindings...)
 	}
 }
 
-func (v *extractVisitor) StmtInterface(n *ast.StmtInterface) {
-	fqn := phputil.ClassNodeFQN(n.Name, v.fc)
-	v.bindings = append(v.bindings, extractAttrBindings(n.AttrGroups, fqn, v.fc, v.path)...)
+func (v *extractVisitor) VisitInterface(n phpwalk.InterfaceInfo) {
+	fqn := v.fc.Resolve(n.NameText)
+	v.bindings = append(v.bindings, extractAttrBindings(n.Raw, n.Src, fqn, v.fc, v.path)...)
 }
 
-// bindingCallVisitor traverses a ServiceProvider class body looking for
-// $this->app->bind/singleton/scoped/instance(...) and App::bind(...) calls.
-type bindingCallVisitor struct {
-	visitor.Null
+// — bindingCallVisitor ────────────────────────────────────────────────────
 
+type bindingCallVisitor struct {
+	phpwalk.NullVisitor
 	path     string
 	fc       *phputil.FileContext
 	bindings []Binding
 }
 
-func (v *bindingCallVisitor) ExprMethodCall(n *ast.ExprMethodCall) {
-	method, ok := thisAppMethod(n)
+func (v *bindingCallVisitor) VisitMethodCall(n phpwalk.MethodCallInfo) {
+	if !isThisAppAccess(n.VarRaw, n.Src) {
+		return
+	}
+	lifetime, ok := bindingMethods[n.MethodName]
 	if !ok {
 		return
 	}
-	lifetime, ok := bindingMethods[method]
-	if !ok {
-		return
-	}
-	v.recordCallBinding(n.Args, lifetime, phputil.FromPosition(v.path, n.GetPosition()))
+	v.recordCallBinding(n.Args, n.Src, lifetime, n.Location)
 }
 
-func (v *bindingCallVisitor) ExprStaticCall(n *ast.ExprStaticCall) {
-	method, ok := appFacadeMethod(n, v.fc)
+func (v *bindingCallVisitor) VisitStaticCall(n phpwalk.StaticCallInfo) {
+	if v.fc.Resolve(n.ClassName) != appFacadeFQN {
+		return
+	}
+	lifetime, ok := bindingMethods[n.MethodName]
 	if !ok {
 		return
 	}
-	lifetime, ok := bindingMethods[method]
-	if !ok {
-		return
-	}
-	v.recordCallBinding(n.Args, lifetime, phputil.FromPosition(v.path, n.GetPosition()))
+	v.recordCallBinding(n.Args, n.Src, lifetime, n.Location)
 }
 
-func (v *bindingCallVisitor) recordCallBinding(rawArgs []ast.Vertex, lifetime string, source phputil.Location) {
-	args := stripArgumentWrappers(rawArgs)
+func (v *bindingCallVisitor) recordCallBinding(args []*ts.Node, src []byte, lifetime string, source phputil.Location) {
 	if len(args) < 1 {
 		return
 	}
-	abstract := extractClassConst(args[0], v.fc)
+	abstract := extractClassConst(args[0], src, v.fc)
 	if abstract == "" {
 		return
 	}
 
-	b := Binding{
-		Abstract: abstract,
-		Lifetime: lifetime,
-		Source:   source,
-	}
+	b := Binding{Abstract: abstract, Lifetime: lifetime, Source: source}
 
 	if len(args) < 2 {
-		// Single-arg form: e.g. ->bind(Foo::class) binds Foo to itself.
 		b.Kind = BindCall
 		b.Concrete = abstract
 		v.bindings = append(v.bindings, b)
 		return
 	}
 
-	switch second := args[1].(type) {
-	case *ast.ExprClassConstFetch:
+	switch args[1].Kind() {
+	case "class_constant_access_expression":
 		b.Kind = BindCall
-		b.Concrete = extractClassConst(second, v.fc)
-	case *ast.ExprClosure:
+		b.Concrete = extractClassConst(args[1], src, v.fc)
+	case "anonymous_function":
 		b.Kind = BindClosure
-		b.Concrete = concreteFromClosure(second, v.fc)
+		b.Concrete = concreteFromClosure(args[1], src, v.fc)
 		if b.Concrete == "" {
-			// Closure body not reducible; jump target is the closure itself.
-			b.Location = phputil.FromPosition(v.path, second.GetPosition())
+			b.Location = phpnode.FromNode(v.path, args[1])
 		}
-	case *ast.ExprArrowFunction:
+	case "arrow_function":
 		b.Kind = BindClosure
-		b.Concrete = concreteFromArrowFn(second, v.fc)
+		b.Concrete = concreteFromArrowFn(args[1], src, v.fc)
 		if b.Concrete == "" {
-			b.Location = phputil.FromPosition(v.path, second.GetPosition())
+			b.Location = phpnode.FromNode(v.path, args[1])
 		}
 	default:
-		// Variable, string literal, or other expression: treat as opaque.
 		b.Kind = BindCall
 	}
 
 	v.bindings = append(v.bindings, b)
 }
 
-// extractAttrBindings reads PHP 8 attribute groups on a class/interface node
-// and returns any Bind/Singleton/ScopedBind bindings found.
-// abstract is the FQN of the annotated class/interface.
-func extractAttrBindings(attrGroups []ast.Vertex, abstract phputil.FQN, fc *phputil.FileContext, path string) []Binding {
+// — PHP 8 attribute helpers ───────────────────────────────────────────────
+
+// extractAttrBindings reads PHP 8 #[Bind/Singleton/ScopedBind(...)] attributes
+// from a class_declaration or interface_declaration node and returns any
+// Binding entries they produce.
+func extractAttrBindings(raw *ts.Node, src []byte, abstract phputil.FQN, fc *phputil.FileContext, path string) []Binding {
+	attrListNode := raw.ChildByFieldName("attributes")
+	if attrListNode == nil {
+		return nil
+	}
 	var out []Binding
-	for _, ag := range attrGroups {
-		attrGroup, ok := ag.(*ast.AttributeGroup)
-		if !ok {
+	for i := uint(0); i < attrListNode.ChildCount(); i++ {
+		attrGroup := attrListNode.Child(i)
+		if attrGroup.Kind() != "attribute_group" {
 			continue
 		}
-		for _, attr := range attrGroup.Attrs {
-			a, ok := attr.(*ast.Attribute)
-			if !ok {
+		for j := uint(0); j < attrGroup.ChildCount(); j++ {
+			attr := attrGroup.Child(j)
+			if attr.Kind() != "attribute" {
 				continue
 			}
-			attrFQN := fc.Resolve(phputil.NameToString(a.Name))
+			// First name-like child is the attribute class.
+			var attrNameText string
+			for k := uint(0); k < attr.ChildCount(); k++ {
+				child := attr.Child(k)
+				if child.Kind() == "qualified_name" || child.Kind() == "name" {
+					attrNameText = phpnode.NodeText(child, src)
+					break
+				}
+			}
+			if attrNameText == "" {
+				continue
+			}
+			attrFQN := fc.Resolve(attrNameText)
 			lifetime, ok := bindingAttributes[attrFQN]
 			if !ok {
 				continue
 			}
-			if len(a.Args) < 1 {
+			argsNode := attr.ChildByFieldName("parameters")
+			if argsNode == nil {
 				continue
 			}
-			args := stripArgumentWrappers(a.Args)
-			if len(args) < 1 {
+			args := phpwalk.ArgExprs(argsNode, src)
+			if len(args) == 0 {
 				continue
 			}
-			concrete := extractClassConst(args[0], fc)
+			concrete := extractClassConst(args[0], src, fc)
 			if concrete == "" {
 				continue
 			}
@@ -214,120 +208,99 @@ func extractAttrBindings(attrGroups []ast.Vertex, abstract phputil.FQN, fc *phpu
 				Concrete: concrete,
 				Kind:     BindAttribute,
 				Lifetime: lifetime,
-				Source:   phputil.FromPosition(path, a.GetPosition()),
-				// Location filled in later from symbolTable.
+				Source:   phpnode.FromNode(path, attr),
 			})
 		}
 	}
 	return out
 }
 
-// thisAppMethod checks if n is a call of the form $this->app->METHOD(...)
-// and returns (method, true) if so.
-func thisAppMethod(n *ast.ExprMethodCall) (string, bool) {
-	pf, ok := n.Var.(*ast.ExprPropertyFetch)
-	if !ok {
-		return "", false
+// — node-level helpers ────────────────────────────────────────────────────
+
+// isThisAppAccess checks if node n is the expression $this->app.
+func isThisAppAccess(n *ts.Node, src []byte) bool {
+	if n == nil || n.Kind() != "member_access_expression" {
+		return false
 	}
-	ev, ok := pf.Var.(*ast.ExprVariable)
-	if !ok {
-		return "", false
+	objNode := n.ChildByFieldName("object")
+	if objNode == nil || objNode.Kind() != "variable_name" {
+		return false
 	}
-	varID, ok := ev.Name.(*ast.Identifier)
-	if !ok {
-		return "", false
+	if phpnode.NodeText(objNode, src) != "$this" {
+		return false
 	}
-	if string(varID.Value) != "$this" {
-		return "", false
-	}
-	propID, ok := pf.Prop.(*ast.Identifier)
-	if !ok {
-		return "", false
-	}
-	if string(propID.Value) != "app" {
-		return "", false
-	}
-	methodID, ok := n.Method.(*ast.Identifier)
-	if !ok {
-		return "", false
-	}
-	return string(methodID.Value), true
+	nameNode := n.ChildByFieldName("name")
+	return nameNode != nil && phpnode.NodeText(nameNode, src) == "app"
 }
 
-// appFacadeMethod checks if n is App::METHOD(...) where App resolves to
-// the Illuminate App facade, and returns (method, true) if so.
-func appFacadeMethod(n *ast.ExprStaticCall, fc *phputil.FileContext) (string, bool) {
-	className := phputil.NameToString(n.Class)
-	if className == "" {
-		return "", false
-	}
-	if fc.Resolve(className) != appFacadeFQN {
-		return "", false
-	}
-	methodID, ok := n.Call.(*ast.Identifier)
-	if !ok {
-		return "", false
-	}
-	return string(methodID.Value), true
-}
-
-// extractClassConst extracts the FQN from an ExprClassConstFetch like
-// `StripeGateway::class`. Returns "" for anything else.
-func extractClassConst(expr ast.Vertex, fc *phputil.FileContext) phputil.FQN {
-	cc, ok := expr.(*ast.ExprClassConstFetch)
-	if !ok {
+// extractClassConst extracts the FQN from a class_constant_access_expression
+// like `StripeGateway::class`. Returns "" for anything else.
+func extractClassConst(n *ts.Node, src []byte, fc *phputil.FileContext) phputil.FQN {
+	if n == nil || n.Kind() != "class_constant_access_expression" {
 		return ""
 	}
-	constID, ok := cc.Const.(*ast.Identifier)
-	if !ok {
-		return ""
-	}
-	if string(constID.Value) != "class" {
-		return ""
-	}
-	return fc.Resolve(phputil.NameToString(cc.Class))
-}
-
-// concreteFromClosure extracts the concrete FQN when a closure body is a
-// single `return new X(...)`. Returns "" when the body is more complex.
-func concreteFromClosure(c *ast.ExprClosure, fc *phputil.FileContext) phputil.FQN {
-	if len(c.Stmts) != 1 {
-		return ""
-	}
-	ret, ok := c.Stmts[0].(*ast.StmtReturn)
-	if !ok || ret.Expr == nil {
-		return ""
-	}
-	newExpr, ok := ret.Expr.(*ast.ExprNew)
-	if !ok {
-		return ""
-	}
-	return fc.Resolve(phputil.NameToString(newExpr.Class))
-}
-
-// concreteFromArrowFn extracts the concrete FQN when an arrow function is
-// `fn($app) => new X(...)`. Returns "" otherwise.
-func concreteFromArrowFn(fn *ast.ExprArrowFunction, fc *phputil.FileContext) phputil.FQN {
-	if fn.Expr == nil {
-		return ""
-	}
-	newExpr, ok := fn.Expr.(*ast.ExprNew)
-	if !ok {
-		return ""
-	}
-	return fc.Resolve(phputil.NameToString(newExpr.Class))
-}
-
-// stripArgumentWrappers unwraps the ast.Argument layer from each item in args,
-// returning the inner expression. Named args keep the expression.
-func stripArgumentWrappers(args []ast.Vertex) []ast.Vertex {
-	out := make([]ast.Vertex, 0, len(args))
-	for _, a := range args {
-		if arg, ok := a.(*ast.Argument); ok {
-			out = append(out, arg.Expr)
-		} else {
-			out = append(out, a)
+	var first, second string
+	for i := uint(0); i < n.ChildCount(); i++ {
+		child := n.Child(i)
+		if child.Kind() == "name" || child.Kind() == "qualified_name" {
+			if first == "" {
+				first = phpnode.NodeText(child, src)
+			} else {
+				second = phpnode.NodeText(child, src)
+				break
+			}
 		}
 	}
-	return out
+	if second != "class" {
+		return ""
+	}
+	return fc.Resolve(first)
+}
+
+// concreteFromClosure extracts the concrete FQN when an anonymous_function
+// body is a single `return new X(...)`. Returns "" when more complex.
+func concreteFromClosure(n *ts.Node, src []byte, fc *phputil.FileContext) phputil.FQN {
+	bodyNode := n.ChildByFieldName("body")
+	if bodyNode == nil {
+		return ""
+	}
+	// Count named, non-comment statements.
+	var stmts []*ts.Node
+	for i := uint(0); i < bodyNode.ChildCount(); i++ {
+		child := bodyNode.Child(i)
+		if child.IsNamed() && child.Kind() != "comment" {
+			stmts = append(stmts, child)
+		}
+	}
+	if len(stmts) != 1 || stmts[0].Kind() != "return_statement" {
+		return ""
+	}
+	ret := stmts[0]
+	for i := uint(0); i < ret.ChildCount(); i++ {
+		if child := ret.Child(i); child.Kind() == "object_creation_expression" {
+			return concreteFromNew(child, src, fc)
+		}
+	}
+	return ""
+}
+
+// concreteFromArrowFn extracts the concrete FQN when an arrow_function body
+// is `new X(...)`. Returns "" otherwise.
+func concreteFromArrowFn(n *ts.Node, src []byte, fc *phputil.FileContext) phputil.FQN {
+	bodyNode := n.ChildByFieldName("body")
+	if bodyNode == nil || bodyNode.Kind() != "object_creation_expression" {
+		return ""
+	}
+	return concreteFromNew(bodyNode, src, fc)
+}
+
+// concreteFromNew extracts the class FQN from an object_creation_expression node.
+func concreteFromNew(n *ts.Node, src []byte, fc *phputil.FileContext) phputil.FQN {
+	for i := uint(0); i < n.ChildCount(); i++ {
+		child := n.Child(i)
+		if child.Kind() == "qualified_name" || child.Kind() == "name" {
+			return fc.Resolve(phpnode.NodeText(child, src))
+		}
+	}
+	return ""
 }

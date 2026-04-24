@@ -4,14 +4,13 @@ import (
 	"fmt"
 	"regexp"
 
-	"github.com/VKCOM/php-parser/pkg/ast"
-	"github.com/VKCOM/php-parser/pkg/visitor"
-	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
+	ts "github.com/tree-sitter/go-tree-sitter"
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
 
-	"github.com/akyrey/laravel-lsp/internal/phpparse"
+	"github.com/akyrey/laravel-lsp/internal/phpnode"
 	"github.com/akyrey/laravel-lsp/internal/phputil"
+	"github.com/akyrey/laravel-lsp/internal/phpwalk"
 )
 
 // unknownPropRe matches the diagnostic message produced by diagVisitor.
@@ -19,13 +18,11 @@ var unknownPropRe = regexp.MustCompile(`^unknown property '([^']+)' on (.+)$`)
 
 // arrayQuickFix describes one "add to $array" quick-fix offered per diagnostic.
 type arrayQuickFix struct {
-	phpProp string // PHP property name without $, e.g. "fillable"
+	phpProp string
 	title   func(prop, modelFQN string) string
 	newText func(prop string, hasItems bool) string
 }
 
-// arrayQuickFixes lists all the quick-fixes offered for an unknown property.
-// $fillable and $appends / $hidden take plain values; $casts takes key => type.
 var arrayQuickFixes = []arrayQuickFix{
 	{
 		phpProp: "fillable",
@@ -70,9 +67,7 @@ var arrayQuickFixes = []arrayQuickFix{
 	},
 }
 
-// CodeAction handles textDocument/codeAction requests. It offers quick-fixes
-// for each "unknown property" diagnostic: add to $fillable, $casts, $appends,
-// or $hidden.
+// CodeAction handles textDocument/codeAction requests.
 func (s *Server) CodeAction(_ *glsp.Context, p *protocol.CodeActionParams) (any, error) {
 	s.mu.RLock()
 	models := s.models
@@ -103,14 +98,10 @@ func (s *Server) CodeAction(_ *glsp.Context, p *protocol.CodeActionParams) (any,
 			continue
 		}
 
-		astRoot, parseErr := phpparse.Bytes(src, cat.Path)
-		if parseErr != nil || astRoot == nil {
+		av := newArrayPropVisitor(cat.Path)
+		if err := av.scan(src); err != nil {
 			continue
 		}
-
-		// Find all array insertion points in one pass.
-		av := newArrayPropVisitor(cat.Path)
-		traverser.NewTraverser(av).Traverse(astRoot)
 
 		kind := protocol.CodeActionKindQuickFix
 		for _, qf := range arrayQuickFixes {
@@ -146,12 +137,10 @@ func (s *Server) CodeAction(_ *glsp.Context, p *protocol.CodeActionParams) (any,
 
 // buildAddToFillableEdit is kept for tests and external callers.
 func buildAddToFillableEdit(modelPath string, src []byte, propName string) *protocol.WorkspaceEdit {
-	astRoot, err := phpparse.Bytes(src, modelPath)
-	if err != nil || astRoot == nil {
+	av := newArrayPropVisitor(modelPath)
+	if err := av.scan(src); err != nil {
 		return nil
 	}
-	av := newArrayPropVisitor(modelPath)
-	traverser.NewTraverser(av).Traverse(astRoot)
 	ins, ok := av.insertions["fillable"]
 	if !ok {
 		return nil
@@ -170,7 +159,7 @@ func buildAddToFillableEdit(modelPath string, src []byte, propName string) *prot
 	}
 }
 
-// byteOffsetToLineCol converts a byte offset to a 0-based (line, utf16-col) pair.
+// byteOffsetToLineCol converts a byte offset to 0-based (line, utf16-col).
 func byteOffsetToLineCol(src []byte, offset int) (line, col int) {
 	if offset > len(src) {
 		offset = len(src)
@@ -194,9 +183,9 @@ type insertionPoint struct {
 
 // arrayPropVisitor finds all four model array properties in one AST pass.
 type arrayPropVisitor struct {
-	visitor.Null
+	phpwalk.NullVisitor
 	path       string
-	insertions map[string]insertionPoint // key: "fillable", "casts", "appends", "hidden"
+	insertions map[string]insertionPoint
 }
 
 func newArrayPropVisitor(path string) *arrayPropVisitor {
@@ -206,75 +195,59 @@ func newArrayPropVisitor(path string) *arrayPropVisitor {
 	}
 }
 
-var arrayPropNames = map[string]bool{
-	"fillable": true,
-	"casts":    true,
-	"appends":  true,
-	"hidden":   true,
-}
-
-func (av *arrayPropVisitor) StmtPropertyList(n *ast.StmtPropertyList) {
-	for _, prop := range n.Props {
-		p, ok := prop.(*ast.StmtProperty)
-		if !ok {
-			continue
-		}
-		ev, ok := p.Var.(*ast.ExprVariable)
-		if !ok {
-			continue
-		}
-		id, ok := ev.Name.(*ast.Identifier)
-		if !ok {
-			continue
-		}
-		name := string(id.Value)
-		// Strip leading $ if present.
-		bare := name
-		if len(bare) > 0 && bare[0] == '$' {
-			bare = bare[1:]
-		}
-		if !arrayPropNames[bare] {
-			continue
-		}
-		arr, ok := p.Expr.(*ast.ExprArray)
-		if !ok {
-			continue
-		}
-		// Find last item with a valid position (trailing comma adds nil/positionless entries).
-		lastEndPos := -1
-		for i := len(arr.Items) - 1; i >= 0; i-- {
-			item := arr.Items[i]
-			if item == nil {
-				continue
-			}
-			pos := item.GetPosition()
-			if pos == nil {
-				continue
-			}
-			lastEndPos = pos.EndPos
-			break
-		}
-		var ins insertionPoint
-		if lastEndPos < 0 {
-			// EndPos is exclusive (one past ']'), so ']' is at EndPos-1.
-			ins.insertByte = arr.GetPosition().EndPos - 1
-			ins.hasItems = false
-		} else {
-			ins.insertByte = lastEndPos
-			ins.hasItems = true
-		}
-		av.insertions[bare] = ins
+// scan parses src and populates insertions.
+func (av *arrayPropVisitor) scan(src []byte) error {
+	tree, err := phpnode.ParseBytes(src)
+	if err != nil {
+		return err
 	}
+	defer tree.Close()
+	phpwalk.Walk(av.path, src, tree, av)
+	return nil
 }
 
-// fillableVisitor is kept for tests that reference it directly.
+var arrayPropNames = map[string]bool{
+	"fillable": true, "casts": true, "appends": true, "hidden": true,
+}
+
+func (av *arrayPropVisitor) VisitProperty(n phpwalk.PropertyInfo) {
+	if !arrayPropNames[n.PropName] || n.ValueRaw == nil {
+		return
+	}
+	if n.ValueRaw.Kind() != "array_creation_expression" {
+		return
+	}
+	av.insertions[n.PropName] = arrayInsertPoint(n.ValueRaw)
+}
+
+// arrayInsertPoint determines the byte offset at which to insert a new element
+// into an array_creation_expression node, and whether the array already has items.
+func arrayInsertPoint(arr *ts.Node) insertionPoint {
+	// Find the last array_element_initializer with a valid position.
+	var lastItemEnd int = -1
+	for i := uint(0); i < arr.ChildCount(); i++ {
+		child := arr.Child(i)
+		if child.Kind() == "array_element_initializer" {
+			end := int(child.EndByte())
+			if end > lastItemEnd {
+				lastItemEnd = end
+			}
+		}
+	}
+	if lastItemEnd < 0 {
+		// Empty array: insert just before the closing ']'.
+		return insertionPoint{insertByte: int(arr.EndByte()) - 1, hasItems: false}
+	}
+	return insertionPoint{insertByte: lastItemEnd, hasItems: true}
+}
+
+// fillableVisitor and newFillableVisitor are kept for tests.
 type fillableVisitor = arrayPropVisitor
 
 func newFillableVisitor(path string) *fillableVisitor {
 	return newArrayPropVisitor(path)
 }
 
-// insertText returns the text to insert at the fillable array for propName.
 func (av *arrayPropVisitor) insertText(propName string) string {
 	ins, ok := av.insertions["fillable"]
 	quoted := "'" + propName + "'"
@@ -284,7 +257,6 @@ func (av *arrayPropVisitor) insertText(propName string) string {
 	return quoted
 }
 
-// insertByte returns the fillable insertion point for legacy callers.
 func (av *arrayPropVisitor) insertByteVal() int {
 	if ins, ok := av.insertions["fillable"]; ok {
 		return ins.insertByte

@@ -7,13 +7,10 @@ import (
 	"os"
 	"regexp"
 
-	"github.com/VKCOM/php-parser/pkg/ast"
-	"github.com/VKCOM/php-parser/pkg/visitor"
-	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
-
 	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
-	"github.com/akyrey/laravel-lsp/internal/phpparse"
+	"github.com/akyrey/laravel-lsp/internal/phpnode"
 	"github.com/akyrey/laravel-lsp/internal/phputil"
+	"github.com/akyrey/laravel-lsp/internal/phpwalk"
 )
 
 var (
@@ -41,56 +38,41 @@ func Merge(path string, idx *eloquent.ModelIndex) error {
 		return fmt.Errorf("idehelper: read %s: %w", path, err)
 	}
 
-	root, err := phpparse.Bytes(src, path)
-	if err != nil || root == nil {
+	tree, parseErr := phpnode.ParseBytes(src)
+	if parseErr != nil {
 		return nil
 	}
+	defer tree.Close()
 
 	mv := &mergeVisitor{
 		src: src,
 		idx: idx,
 		fc:  &phputil.FileContext{Path: path, Uses: make(phputil.UseMap)},
 	}
-	traverser.NewTraverser(mv).Traverse(root)
+	phpwalk.Walk(path, src, tree, mv)
 	return nil
 }
 
 // mergeVisitor walks the ide-helper AST and applies doc-comment entries.
 type mergeVisitor struct {
-	visitor.Null
+	phpwalk.NullVisitor
 	src []byte
 	idx *eloquent.ModelIndex
 	fc  *phputil.FileContext
 }
 
-func (v *mergeVisitor) StmtNamespace(n *ast.StmtNamespace) {
-	if n.Name != nil {
-		v.fc.Namespace = phputil.FQN(phputil.NameToString(n.Name))
-	} else {
-		v.fc.Namespace = ""
-	}
+func (v *mergeVisitor) VisitNamespace(ns string) { v.fc.Namespace = phputil.FQN(ns) }
+func (v *mergeVisitor) VisitUseItem(alias, fqn string) {
+	v.fc.Uses[alias] = phputil.FQN(fqn)
 }
 
-func (v *mergeVisitor) StmtUse(n *ast.StmtUseList) {
-	phputil.AddUsesToContext(v.fc, n.Uses, "")
-}
-
-func (v *mergeVisitor) StmtGroupUse(n *ast.StmtGroupUseList) {
-	phputil.AddUsesToContext(v.fc, n.Uses, phputil.NameToString(n.Prefix))
-}
-
-func (v *mergeVisitor) StmtClass(n *ast.StmtClass) {
-	fqn := phputil.ClassNodeFQN(n.Name, v.fc)
+func (v *mergeVisitor) VisitClass(n phpwalk.ClassInfo) {
+	fqn := v.fc.Resolve(n.NameText)
 	if fqn == "" {
 		return
 	}
 
-	pos := n.GetPosition()
-	if pos == nil {
-		return
-	}
-
-	doc := extractDocComment(v.src, pos.StartPos)
+	doc := extractDocComment(v.src, int(n.Raw.StartByte()))
 	if doc == "" {
 		return
 	}

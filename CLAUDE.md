@@ -5,15 +5,17 @@ Project context for Claude Code sessions.
 ## What is this project?
 
 `laravel-lsp` is a Go LSP server that provides Laravel-specific
-jump-to-definition and find-references for editors that lack a Laravel Idea
-equivalent (Neovim, VS Code). It indexes Laravel's runtime conventions that
-generic PHP language servers miss: service container bindings and Eloquent
-model attribute accessors.
+jump-to-definition, find-references, hover, completion, rename, diagnostics,
+and code actions for editors that lack a Laravel Idea equivalent (Neovim,
+VS Code). It indexes Laravel's runtime conventions that generic PHP language
+servers miss: service container bindings and Eloquent model attribute accessors.
 
 ## Tech stack
 
 - **Language**: Go 1.23+
-- **PHP parser**: `github.com/VKCOM/php-parser` v0.8.2 (VKCOM fork, PHP 8.1 config)
+- **PHP parser**: `github.com/tree-sitter/tree-sitter-php` v0.24.2 via
+  `github.com/tree-sitter/go-tree-sitter` v0.25.0 (CGo). Supports PHP 5–8.x
+  including PHP 8.4 property hooks and asymmetric visibility.
 - **LSP framework**: `github.com/tliron/glsp` v0.2.2, protocol 3.16, stdio transport
 - **Build**: `make build` (outputs `./laravel-lsp`) or `go build -o laravel-lsp ./cmd/laravel-lsp`
 - **Tests**: `make test` / `go test ./...`
@@ -33,47 +35,70 @@ make install      # go install ./cmd/laravel-lsp
 
 Always run `make test-race` before committing.
 
+### Debug command
+
+```bash
+# Inspect what the LSP server would index, without starting an editor session.
+laravel-lsp debug /path/to/laravel-project          # text output
+laravel-lsp debug -json /path/to/laravel-project     # JSON output
+laravel-lsp debug -models /path/to/laravel-project   # models only
+laravel-lsp debug -bindings /path/to/laravel-project # bindings only
+laravel-lsp debug -dirs app,src /path/to/project     # custom scan dirs
+laravel-lsp debug --help                             # full flag list
+```
+
 ## Project layout
 
 ```
-cmd/laravel-lsp/main.go             # entry point only — no logic here
+cmd/laravel-lsp/
+  main.go                       # entry point: dispatches LSP server or debug subcommand
+  debug.go                      # `laravel-lsp debug` — index inspection tool
 internal/
   indexer/
-    container/                      # service-container binding indexer
-      index.go                      # BindingIndex + Binding types
-      symbols.go                    # classDecl + symbolTable (phase 1 output)
-      scan.go                       # phase 1 traversal: build symbolTable
-      extract.go                    # phase 2 traversal: extract Bindings
-      walk.go                       # Walk() — two-phase entry point
-    eloquent/                       # Eloquent model attribute indexer
-      catalog.go                    # ModelCatalog + ModelIndex + attribute types
-      symbols.go                    # classDecl + symbolTable (phase 1 output)
-      scan.go                       # phase 1 traversal: build symbolTable
-      attributes.go                 # extract modern + legacy accessor/mutator methods
-      arrays.go                     # extract $fillable/$casts/$appends/$hidden
-      extract.go                    # per-file catalog extraction
-      walk.go                       # Walk() — two-phase entry point
-    idehelper/merge.go              # _ide_helper_models.php stub parser (not yet implemented)
+    container/                  # service-container binding indexer
+      index.go                  # BindingIndex + Binding types
+      symbols.go                # classDecl + symbolTable (phase 1 output)
+      scan.go                   # phase 1 traversal: build symbolTable
+      extract.go                # phase 2 traversal: extract Bindings
+      walk.go                   # Walk() + ReindexFile()
+    eloquent/                   # Eloquent model attribute indexer
+      catalog.go                # ModelCatalog + ModelIndex + attribute types
+      symbols.go                # classDecl + symbolTable (phase 1 output)
+      scan.go                   # phase 1 traversal: build symbolTable
+      attributes.go             # modern/legacy accessors, mutators, relationships
+      arrays.go                 # $fillable / $casts / $appends / $hidden
+      extract.go                # per-file catalog extraction
+      walk.go                   # Walk() + ReindexFile()
+    idehelper/
+      merge.go                  # _ide_helper_models.php stub parser
   lsp/
-    server.go                       # Server struct — owns all LSP state + handler methods
-    definition.go                   # textDocument/definition — container + Eloquent dispatch
-    references.go                   # textDocument/references (returns nil — v0.2)
-    documents.go                    # DocumentStore — in-memory doc cache with disk fallback
-    uri.go                          # URIToPath, PathToURI, toLSPLocation, positionToByteOffset
-  phpparse/
-    parse.go                        # Bytes() + File() — shared PHP 8.1 parse helpers
+    server.go                   # Server struct — owns all LSP state + handler methods
+    definition.go               # textDocument/definition — container + Eloquent dispatch
+    references.go               # textDocument/references
+    hover.go                    # textDocument/hover
+    completion.go               # textDocument/completion + varTypeVisitor
+    rename.go                   # textDocument/rename + prepareRename
+    diagnostics.go              # textDocument/publishDiagnostics
+    codeaction.go               # textDocument/codeAction
+    symbols.go                  # textDocument/documentSymbol
+    scope.go                    # $var → FQN inference (assignments + typed params)
+    documents.go                # DocumentStore — in-memory cache with disk fallback
+    uri.go                      # URI/path conversion, UTF-16 position helpers
+  phpnode/
+    parse.go                    # ParseBytes() / ParseFile() + FromNode() using tree-sitter
+  phpwalk/
+    visitor.go                  # Visitor interface + NullVisitor + all Info types
+    walk.go                     # Walk(path, src, tree, v) — depth-first CST traversal
+    names.go                    # ClassConstFQN, UnwrapTypeName, ArgExprs helpers
   phputil/
-    fqn.go                          # FQN type, UseMap, FileContext + Resolve()
-    case.go                         # Snake/Studly/Camel — mirrors Illuminate\Support\Str
-    ast.go                          # NameToString, ClassName, AddUsesToContext, ClassNodeFQN
-    location.go                     # Location type + FromPosition()
-  resolver/
-    scope.go                        # $var → FQN tracking per function (not yet implemented)
-    expr.go                         # expression type resolver (not yet implemented)
+    fqn.go                      # FQN type, UseMap, FileContext + Resolve()
+    case.go                     # Snake/Studly/Camel — mirrors Illuminate\Support\Str
+    ast.go                      # ClassFQN, LastSegment helpers
+    location.go                 # Location type (parser-agnostic byte-offset struct)
 testdata/
-  bindings/                         # PHP fixtures for container indexer tests
-  models/                           # PHP fixtures for Eloquent indexer tests
-  idehelper/                        # _ide_helper_models.php fixture
+  bindings/                     # PHP fixtures for container indexer tests
+  models/                       # PHP fixtures for Eloquent indexer tests
+  idehelper/                    # _ide_helper_models.php fixture
 ```
 
 ## Architecture
@@ -89,39 +114,48 @@ Indexer packages are **pure** — they take a root path and return an index valu
 No LSP types leak into them. The lsp package is the only layer that touches
 `tliron/glsp` protocol types.
 
-**Visitor pattern**: embed `visitor.Null` (VKCOM's 170-method no-op visitor),
-override only the methods needed. The traverser dispatches via `n.Accept(v)`,
-then recurses into children automatically — no manual child traversal needed.
+**Visitor pattern** (`phpwalk`): implement `phpwalk.Visitor`, embed
+`phpwalk.NullVisitor` for no-op defaults, override only the methods needed.
+`phpwalk.Walk(path, src, tree, visitor)` does a depth-first pre-order traversal
+of the tree-sitter CST, calling typed callbacks for each relevant PHP node kind.
+The visitor cannot prune recursion — all nodes are always visited.
 
 **FileContext**: built incrementally during a traversal. PHP files have
-`namespace` before class declarations, so the namespace and `use` statements
-are always populated by the time `StmtClass`/`StmtInterface` fires. When
-calling `Resolve()` on a name node, always call `phputil.NameToString()` first
-to get the raw string, then `fc.Resolve()`.
+`namespace` before class declarations, so `VisitNamespace` / `VisitUseItem`
+always fire before `VisitClass`. Visitors maintain their own `fc` and call
+`fc.Resolve(name)` to turn unqualified/aliased names into FQNs.
 
-**`NameToString` for fully-qualified names**: `*ast.NameFullyQualified` nodes
-(PHP's `\Foo\Bar` syntax) return `"\Foo\Bar"` (with leading backslash) so that
-`FileContext.Resolve` recognises and strips it correctly. Do not call `Resolve`
-on a raw `joinNameParts` result for FQ names — it will prepend the namespace.
+**tree-sitter grammar notes:**
+- `instanceof` is parsed as `binary_expression` with `operator: instanceof`,
+  not as an `instanceof_expression` node.
+- `class_constant_access_expression` (`Foo::class`) has no named fields —
+  children are positional: first `name`/`qualified_name` = class, second = constant.
+- `optional_type` is the nullable type wrapper (`?Foo`), not `nullable_type`.
+- `string` nodes wrap their content in a `string_content` child; use that child
+  to extract the value without quotes.
+- `array_element_initializer` has no named fields for its children either; the
+  key/value are positional string nodes.
 
-**`ExprVariable.Name` for `$this`**: `Identifier.Value` is `"$this"` (dollar
-sign included), not `"this"`. All variable name comparisons must include `$`.
+**`$this` in variable_name nodes**: `Utf8Text(src)` on a `variable_name` node
+returns the full text including `$`, e.g. `"$this"`. Variable name comparisons
+always use the full `$`-prefixed string.
 
 ## Key design decisions
 
-- **PHP 8.1 parser config**: pinned to `{Major:8, Minor:1}` (official max
-  supported by VKCOM v0.8.2). PHP 8.2/8.3 files that produce parse errors are
-  logged to stderr and skipped; the partial AST is still processed.
+- **PHP version support**: tree-sitter-php v0.24.2 parses PHP 5–8.x with full
+  error recovery. PHP 8.4 property hooks and asymmetric visibility parse cleanly
+  (`HasError() == false`). Files always produce a usable tree; no files are
+  skipped due to parser version limits.
 - **Case translation**: mirrors `Illuminate\Support\Str` exactly. `Snake()`
   uses a per-character lookahead — `"HTMLParser"` → `"h_t_m_l_parser"` (each
   capital gets its own underscore, no run collapsing). Tests cover all 15 rows
   from the plan including the starred edge cases.
 - **IDE-helper policy**: when `SourceIdeHelper` is the only source for a name,
-  return nothing (option b from the plan). `ModelAttribute.Source` is the
-  filter; AST entries always win.
+  return nothing. `ModelAttribute.Source` is the filter; AST entries always win.
 - **Closure bindings**: only extracted when the closure body is a single
-  `StmtReturn` with an `ExprNew` (or an `ExprArrowFunction` whose body is
-  `ExprNew`). Multi-statement closures emit a `Binding` with empty `Concrete`.
+  `return_statement` with an `object_creation_expression` (or an `arrow_function`
+  whose body is `object_creation_expression`). Multi-statement closures emit a
+  `Binding` with empty `Concrete`.
 
 ## Testing conventions
 
@@ -132,7 +166,7 @@ sign included), not `"this"`. All variable name comparisons must include `$`.
 - Table-driven tests where multiple input cases exist.
 - Race detector must pass: `make test-race`.
 
-## LSP handler wiring (v0.1)
+## LSP handler wiring
 
 `textDocument/definition` is live for two flows:
 
@@ -175,13 +209,13 @@ sign included), not `"this"`. All variable name comparisons must include `$`.
 **Known limitations:**
 - References scan covers `app/` and `routes/` only (configurable via `referenceScanDirs`).
 - Chained access resolves through one Relationship hop only (not `$a->b->c->d`).
-- Relationship detection from the method body requires the pattern `return $this->relationMethod(Class::class)`; more complex bodies (multi-statement, variable indirection) are not detected.
+- Relationship detection requires `return $this->relationMethod(Class::class)`;
+  multi-statement bodies are not detected.
 
 12. **`textDocument/rename`** — Eloquent property rename across files. Reference
     sites (`$model->propName`) and method-based declaration sites (modern/legacy
     accessors) are renamed. Array-based declarations (`$fillable`, `$casts`, etc.)
-    are not renamed automatically (their stored location points to the whole
-    property list, not the individual string literal; update them manually).
+    are not renamed automatically.
     Container abstract rename is out of scope.
 
 13. **`textDocument/prepareRename`** — validates the cursor is on a renameable
@@ -193,9 +227,8 @@ sign included), not `"this"`. All variable name comparisons must include `$`.
     class is indexed. Cleared on `DidClose`. Does not fire for variables whose
     type cannot be resolved (avoids false positives).
 
-**VKCOM parser EndPos convention**: `EndPos` is exclusive (one past the last
-byte), matching LSP's exclusive range end. `toLSPRange` uses it directly
-without adding 1.
+**tree-sitter EndByte convention**: `EndByte()` is exclusive (one past the last
+byte), matching LSP's exclusive range end. `toLSPRange` uses it directly.
 
 15. **Incremental reindex** — file-save events trigger per-file reindex instead
     of a full walk. Both `BindingIndex` and `ModelIndex` retain their symbol
@@ -226,6 +259,8 @@ without adding 1.
 
 | Package | Use |
 |---------|-----|
-| `github.com/VKCOM/php-parser` | PHP 8 AST parser |
+| `github.com/tree-sitter/go-tree-sitter` | CGo bindings for the tree-sitter runtime |
+| `github.com/tree-sitter/tree-sitter-php` | PHP grammar (supports PHP 5–8.x) |
 | `github.com/tliron/glsp` | LSP protocol 3.16 + stdio transport |
 | `github.com/tliron/commonlog` | Structured logging to stderr |
+| `github.com/fsnotify/fsnotify` | File watcher for incremental reindex |

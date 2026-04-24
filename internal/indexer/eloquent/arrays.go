@@ -1,8 +1,11 @@
 package eloquent
 
 import (
-	"github.com/VKCOM/php-parser/pkg/ast"
-	"github.com/akyrey/laravel-lsp/internal/phputil"
+	"strings"
+
+	ts "github.com/tree-sitter/go-tree-sitter"
+
+	"github.com/akyrey/laravel-lsp/internal/phpnode"
 )
 
 // arrayProps maps PHP property names to their AttributeKind.
@@ -15,46 +18,49 @@ var arrayProps = map[string]AttributeKind{
 
 // extractArrayProperties inspects $fillable, $casts, $appends, $hidden on
 // the class and returns a ModelAttribute for each string entry found.
-func extractArrayProperties(path string, classNode *ast.StmtClass) []ModelAttribute {
+func extractArrayProperties(path string, classNode *ts.Node, src []byte) []ModelAttribute {
+	bodyNode := classNode.ChildByFieldName("body")
+	if bodyNode == nil {
+		return nil
+	}
+
 	var out []ModelAttribute
-	for _, stmt := range classNode.Stmts {
-		pl, ok := stmt.(*ast.StmtPropertyList)
-		if !ok {
+	for i := uint(0); i < bodyNode.ChildCount(); i++ {
+		propDecl := bodyNode.Child(i)
+		if propDecl.Kind() != "property_declaration" {
 			continue
 		}
-		for _, prop := range pl.Props {
-			p, ok := prop.(*ast.StmtProperty)
-			if !ok {
+
+		for j := uint(0); j < propDecl.ChildCount(); j++ {
+			elem := propDecl.Child(j)
+			if elem.Kind() != "property_element" {
 				continue
 			}
-			ev, ok := p.Var.(*ast.ExprVariable)
-			if !ok {
+
+			nameNode := elem.ChildByFieldName("name")
+			if nameNode == nil {
 				continue
 			}
-			id, ok := ev.Name.(*ast.Identifier)
-			if !ok {
-				continue
-			}
-			propName := string(id.Value)
-			// Identifier.Value for a property includes the $ sigil.
-			if len(propName) > 0 && propName[0] == '$' {
-				propName = propName[1:]
-			}
+			// variable_name text includes "$", e.g. "$fillable" — strip it.
+			propName := strings.TrimPrefix(phpnode.NodeText(nameNode, src), "$")
+
 			kind, ok := arrayProps[propName]
 			if !ok {
 				continue
 			}
-			arr, ok := p.Expr.(*ast.ExprArray)
-			if !ok {
+
+			valNode := elem.ChildByFieldName("default_value")
+			if valNode == nil || valNode.Kind() != "array_creation_expression" {
 				continue
 			}
-			loc := phputil.FromPosition(path, p.GetPosition())
-			for _, item := range arr.Items {
-				ai, ok := item.(*ast.ExprArrayItem)
-				if !ok {
+
+			loc := phpnode.FromNode(path, propDecl)
+			for k := uint(0); k < valNode.ChildCount(); k++ {
+				item := valNode.Child(k)
+				if item.Kind() != "array_element_initializer" {
 					continue
 				}
-				name := arrayItemName(kind, ai)
+				name := arrayItemName(kind, item, src)
 				if name == "" {
 					continue
 				}
@@ -70,30 +76,44 @@ func extractArrayProperties(path string, classNode *ast.StmtClass) []ModelAttrib
 	return out
 }
 
-// arrayItemName extracts the exposed attribute name from an array item.
-// For $casts, the key is the exposed name (associative: 'col' => 'type').
-// For $fillable / $appends / $hidden, the value is the name (sequential list).
-func arrayItemName(kind AttributeKind, ai *ast.ExprArrayItem) string {
+// arrayItemName extracts the exposed attribute name from an array element.
+// For $casts the key is the exposed name (associative: 'col' => 'type').
+// For $fillable / $appends / $hidden the value is the name (sequential list).
+func arrayItemName(kind AttributeKind, item *ts.Node, src []byte) string {
+	// Collect string nodes in order (ignoring "=>" and other punctuation).
+	var vals []string
+	for i := uint(0); i < item.ChildCount(); i++ {
+		child := item.Child(i)
+		if child.Kind() == "string" {
+			vals = append(vals, stringValue(child, src))
+		}
+	}
 	switch kind {
 	case CastArray:
-		if ai.Key != nil {
-			return stringLiteralValue(ai.Key)
+		// Key is the exposed name: 'col' => 'cast_type'
+		if len(vals) >= 2 {
+			return vals[0]
 		}
 	default:
-		return stringLiteralValue(ai.Val)
+		// Value is the exposed name: 'col'
+		if len(vals) > 0 {
+			return vals[len(vals)-1]
+		}
 	}
 	return ""
 }
 
-// stringLiteralValue returns the unquoted string value for a ScalarString node,
-// or "" if the node is not a string literal.
-func stringLiteralValue(node ast.Vertex) string {
-	s, ok := node.(*ast.ScalarString)
-	if !ok {
-		return ""
+// stringValue extracts the unquoted content of a PHP string literal node.
+// tree-sitter-php represents 'email' as: string { ' string_content "email" ' }.
+func stringValue(n *ts.Node, src []byte) string {
+	for i := uint(0); i < n.ChildCount(); i++ {
+		child := n.Child(i)
+		if child.Kind() == "string_content" {
+			return phpnode.NodeText(child, src)
+		}
 	}
-	v := string(s.Value)
-	// Parser preserves quotes: strip surrounding ' or ".
+	// Fallback: strip surrounding quote characters from the raw node text.
+	v := phpnode.NodeText(n, src)
 	if len(v) >= 2 && (v[0] == '\'' || v[0] == '"') {
 		return v[1 : len(v)-1]
 	}

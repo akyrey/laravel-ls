@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/VKCOM/php-parser/pkg/visitor/traverser"
-	"github.com/akyrey/laravel-lsp/internal/phpparse"
+	"github.com/akyrey/laravel-lsp/internal/phpnode"
+	"github.com/akyrey/laravel-lsp/internal/phpwalk"
 )
 
 // ReindexFile updates idx for a single changed file. It clones the retained
@@ -24,7 +24,7 @@ func ReindexFile(path string, old *BindingIndex) (*BindingIndex, error) {
 	newSyms := old.syms.clone()
 	newSyms.removeFile(path)
 
-	astRoot, err := phpparse.File(path)
+	src, tree, err := phpnode.ParseFile(path)
 	if err != nil {
 		// File deleted or parse error — remove its entries, keep the rest.
 		newIdx := NewBindingIndex()
@@ -38,9 +38,10 @@ func ReindexFile(path string, old *BindingIndex) (*BindingIndex, error) {
 		}
 		return newIdx, nil
 	}
+	defer tree.Close()
 
 	sv := newScanVisitor(path, newSyms)
-	traverser.NewTraverser(sv).Traverse(astRoot)
+	phpwalk.Walk(path, src, tree, sv)
 	newSyms.resolveServiceProviders()
 
 	newIdx := NewBindingIndex()
@@ -52,7 +53,7 @@ func ReindexFile(path string, old *BindingIndex) (*BindingIndex, error) {
 			}
 		}
 	}
-	for _, b := range extractFileBindings(path, astRoot, newSyms) {
+	for _, b := range extractFileBindings(path, src, tree, newSyms) {
 		newIdx.Add(b)
 	}
 	return newIdx, nil
@@ -94,12 +95,13 @@ func Walk(root string, dirs []string) (*BindingIndex, error) {
 			if d.IsDir() || !strings.HasSuffix(path, ".php") {
 				return nil
 			}
-			astRoot, parseErr := phpparse.File(path)
+			src, tree, parseErr := phpnode.ParseFile(path)
 			if parseErr != nil {
 				fmt.Fprintf(os.Stderr, "laravel-lsp: skipping %s: %v\n", path, parseErr)
 				return nil
 			}
-			for _, b := range extractFileBindings(path, astRoot, syms) {
+			defer tree.Close()
+			for _, b := range extractFileBindings(path, src, tree, syms) {
 				idx.Add(b)
 			}
 			return nil
