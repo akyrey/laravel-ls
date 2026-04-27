@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -18,8 +19,93 @@ import (
 	"github.com/akyrey/laravel-lsp/internal/indexer/idehelper"
 )
 
-// watchDirs are the subdirectories watched for PHP changes.
-var watchDirs = []string{"app", "routes"}
+// Config holds settings passed via initializationOptions in the LSP initialize
+// request. All directory lists are relative to the project root and support
+// single-level glob patterns such as "Modules/*/app".
+type Config struct {
+	// ScanDirs are the directories walked when building the container and
+	// Eloquent indexes. Defaults to ["app"].
+	ScanDirs []string `json:"scanDirs"`
+
+	// ReferenceDirs are the directories walked when searching for references
+	// and rename sites. Defaults to ["app", "routes"].
+	ReferenceDirs []string `json:"referenceDirs"`
+}
+
+func defaultConfig() Config {
+	return Config{
+		ScanDirs:      []string{"app"},
+		ReferenceDirs: []string{"app", "routes"},
+	}
+}
+
+// parseConfig decodes initializationOptions into a Config and fills in any
+// fields that were not explicitly set:
+//   - scanDirs defaults to ["app"]
+//   - referenceDirs defaults to scanDirs + ["routes"], so that adding module
+//     directories to scanDirs automatically covers them for reference search too.
+//
+// Setting referenceDirs explicitly in initializationOptions overrides the
+// auto-derived value.
+func parseConfig(opts any) (Config, error) {
+	// Unmarshal into a zero struct so we can detect absent fields.
+	var raw struct {
+		ScanDirs      []string `json:"scanDirs"`
+		ReferenceDirs []string `json:"referenceDirs"`
+	}
+	data, err := json.Marshal(opts)
+	if err != nil {
+		return defaultConfig(), err
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return defaultConfig(), err
+	}
+
+	cfg := Config{
+		ScanDirs:      raw.ScanDirs,
+		ReferenceDirs: raw.ReferenceDirs,
+	}
+	if len(cfg.ScanDirs) == 0 {
+		cfg.ScanDirs = []string{"app"}
+	}
+	if len(cfg.ReferenceDirs) == 0 {
+		// Auto-derive: same dirs as scanning + routes.
+		cfg.ReferenceDirs = append(append([]string{}, cfg.ScanDirs...), "routes")
+	}
+	return cfg, nil
+}
+
+// expandDirs expands glob patterns in patterns relative to root and returns
+// a deduplicated list of directories that exist on disk.
+// Non-glob patterns are included as-is (Walk handles missing dirs silently).
+func expandDirs(root string, patterns []string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, p := range patterns {
+		if !strings.ContainsAny(p, "*?[") {
+			if !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
+			continue
+		}
+		matches, err := filepath.Glob(filepath.Join(root, p))
+		if err != nil {
+			continue
+		}
+		for _, m := range matches {
+			rel, err := filepath.Rel(root, m)
+			if err != nil {
+				continue
+			}
+			if !seen[rel] {
+				seen[rel] = true
+				out = append(out, rel)
+			}
+		}
+	}
+	return out
+}
 
 // reindexDebounce is how long to wait after the last PHP file change before
 // triggering a reindex. Chosen to avoid thrashing during multi-file saves.
@@ -30,6 +116,7 @@ const reindexDebounce = 500 * time.Millisecond
 type Server struct {
 	version string
 	root    string
+	cfg     Config
 	docs    *DocumentStore
 	log     commonlog.Logger
 
@@ -43,18 +130,33 @@ type Server struct {
 func NewServer(log commonlog.Logger, version string) *Server {
 	return &Server{
 		version: version,
+		cfg:     defaultConfig(),
 		docs:    newDocumentStore(),
 		log:     log,
 	}
 }
 
-// Initialize detects the project root and returns server capabilities.
+// Initialize detects the project root, reads initializationOptions, and
+// returns server capabilities.
 func (s *Server) Initialize(_ *glsp.Context, p *protocol.InitializeParams) (any, error) {
 	root := detectRoot(p)
+
+	cfg := defaultConfig()
+	if p.InitializationOptions != nil {
+		var err error
+		cfg, err = parseConfig(p.InitializationOptions)
+		if err != nil {
+			s.log.Errorf("laravel-lsp: invalid initializationOptions: %v", err)
+			cfg = defaultConfig()
+		}
+	}
+
 	s.mu.Lock()
 	s.root = root
+	s.cfg = cfg
 	s.mu.Unlock()
-	s.log.Infof("laravel-lsp: root=%s", root)
+	s.log.Infof("laravel-lsp: root=%s scanDirs=%v referenceDirs=%v",
+		root, cfg.ScanDirs, cfg.ReferenceDirs)
 
 	syncKind := protocol.TextDocumentSyncKindFull
 	ver := s.version
@@ -154,9 +256,23 @@ func (s *Server) Shutdown(_ *glsp.Context) error { return nil }
 // SetTrace is a no-op.
 func (s *Server) SetTrace(_ *glsp.Context, _ *protocol.SetTraceParams) error { return nil }
 
+// effectiveReferenceDirs returns the expanded reference scan directories for
+// the given root, ready to pass to scanReferences / scanRenameRefs.
+func (s *Server) effectiveReferenceDirs(root string) []string {
+	s.mu.RLock()
+	dirs := s.cfg.ReferenceDirs
+	s.mu.RUnlock()
+	return expandDirs(root, dirs)
+}
+
 // reindex rebuilds both indexes in parallel and atomically swaps them in.
 func (s *Server) reindex(root string) {
-	s.log.Infof("laravel-lsp: indexing %s", root)
+	s.mu.RLock()
+	cfg := s.cfg
+	s.mu.RUnlock()
+
+	scanDirs := expandDirs(root, cfg.ScanDirs)
+	s.log.Infof("laravel-lsp: indexing %s (dirs: %v)", root, scanDirs)
 
 	var wg sync.WaitGroup
 	var bindings *container.BindingIndex
@@ -166,11 +282,11 @@ func (s *Server) reindex(root string) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		bindings, err1 = container.Walk(root, container.DefaultScanDirs)
+		bindings, err1 = container.Walk(root, scanDirs)
 	}()
 	go func() {
 		defer wg.Done()
-		models, err2 = eloquent.Walk(root, eloquent.DefaultScanDirs)
+		models, err2 = eloquent.Walk(root, scanDirs)
 	}()
 	wg.Wait()
 
@@ -205,16 +321,25 @@ func (s *Server) reindex(root string) {
 	}
 }
 
-// startWatcher watches watchDirs under root for PHP file changes and triggers
-// a debounced reindex on any write/create/remove event.
+// startWatcher watches the union of scan and reference directories under root
+// for PHP file changes and triggers a debounced reindex on any write/create/remove.
 func (s *Server) startWatcher(root string) {
+	s.mu.RLock()
+	cfg := s.cfg
+	s.mu.RUnlock()
+
+	// Watch the union of scan dirs and reference dirs so we catch changes
+	// everywhere the server reads from.
+	allPatterns := append(append([]string{}, cfg.ScanDirs...), cfg.ReferenceDirs...)
+	watchSet := expandDirs(root, allPatterns)
+
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		s.log.Errorf("laravel-lsp: watcher init: %v", err)
 		return
 	}
 
-	for _, dir := range watchDirs {
+	for _, dir := range watchSet {
 		scanDir := filepath.Join(root, dir)
 		if _, err := os.Stat(scanDir); err != nil {
 			continue

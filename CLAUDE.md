@@ -39,13 +39,41 @@ Always run `make test-race` before committing.
 
 ```bash
 # Inspect what the LSP server would index, without starting an editor session.
-laravel-lsp debug /path/to/laravel-project          # text output
+laravel-lsp debug /path/to/laravel-project          # text output (defaults: app/)
 laravel-lsp debug -json /path/to/laravel-project     # JSON output
 laravel-lsp debug -models /path/to/laravel-project   # models only
 laravel-lsp debug -bindings /path/to/laravel-project # bindings only
-laravel-lsp debug -dirs app,src /path/to/project     # custom scan dirs
+laravel-lsp debug -dirs app,Modules/*/app /path/to/project  # glob scan dirs
 laravel-lsp debug --help                             # full flag list
 ```
+
+## Configuration (initializationOptions)
+
+Passed by the editor in the LSP `initialize` request. All fields are optional.
+
+```json
+{
+  "scanDirs":      ["app", "Modules/*/app"],
+  "referenceDirs": ["app", "routes", "Modules/*/app", "Modules/*/routes"]
+}
+```
+
+| Field | Default | Purpose |
+|-------|---------|---------|
+| `scanDirs` | `["app"]` | Directories walked to build the container + Eloquent indexes |
+| `referenceDirs` | *(auto)* | Directories walked when finding references and rename sites. Defaults to `scanDirs + ["routes"]` when not set. |
+
+Both fields support single-level glob patterns (`Modules/*/app`). `**` is not
+supported. Patterns are expanded via `filepath.Glob` at indexing time.
+
+The file watcher watches the union of `scanDirs` and `referenceDirs` so changes
+in any configured directory trigger an incremental reindex.
+
+**Common module setup** — only `scanDirs` needs to be set:
+```json
+{ "scanDirs": ["app", "Modules/*/app"] }
+```
+`referenceDirs` auto-derives to `["app", "Modules/*/app", "routes"]`.
 
 ## Project layout
 

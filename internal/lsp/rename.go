@@ -69,7 +69,7 @@ func (s *Server) Rename(_ *glsp.Context, p *protocol.RenameParams) (*protocol.Wo
 		return nil, nil
 	}
 
-	reps := scanRenameRefs(root, referenceScanDirs, sym, s.docs, models, p.NewName)
+	reps := scanRenameRefs(root, s.effectiveReferenceDirs(root), sym, s.docs, models, p.NewName)
 	reps = append(reps, collectDeclReplacements(sym, models, p.NewName, s.docs)...)
 
 	if len(reps) == 0 {

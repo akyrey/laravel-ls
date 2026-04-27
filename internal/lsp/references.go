@@ -17,10 +17,6 @@ import (
 	"github.com/akyrey/laravel-lsp/internal/phpwalk"
 )
 
-// referenceScanDirs lists subdirectories under root that are walked during a
-// references scan. Covers controllers, jobs, policies, etc.
-var referenceScanDirs = []string{"app", "routes"}
-
 // References handles textDocument/references requests.
 func (s *Server) References(_ *glsp.Context, p *protocol.ReferenceParams) ([]protocol.Location, error) {
 	s.mu.RLock()
@@ -43,7 +39,7 @@ func (s *Server) References(_ *glsp.Context, p *protocol.ReferenceParams) ([]pro
 		return nil, nil
 	}
 
-	locs := scanReferences(root, referenceScanDirs, sym, s.docs, models)
+	locs := scanReferences(root, s.effectiveReferenceDirs(root), sym, s.docs, models)
 
 	if p.Context.IncludeDeclaration {
 		locs = append(locs, declarationLocations(sym, bindings, models)...)

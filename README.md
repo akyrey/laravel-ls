@@ -75,9 +75,41 @@ cd laravel-lsp
 make build
 ```
 
+## Configuration
+
+All settings are passed as `initializationOptions` in the LSP `initialize`
+request. All fields are optional.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `scanDirs` | `string[]` | `["app"]` | Directories to index (models, service providers). Supports single-level glob patterns. |
+| `referenceDirs` | `string[]` | *(auto)* | Directories searched when finding references and rename sites. Defaults to `scanDirs + ["routes"]`. Supports glob patterns. |
+
+`referenceDirs` is auto-derived from `scanDirs + ["routes"]` when not explicitly
+set — so adding module directories to `scanDirs` is usually all you need.
+
+Glob patterns use `filepath.Glob` semantics: `*` matches any sequence of
+non-separator characters within one directory level. `**` is not supported.
+
+**Modular Laravel (e.g. nwidart/laravel-modules) — minimal config:**
+```json
+{
+  "scanDirs": ["app", "Modules/*/app"]
+}
+```
+This automatically sets `referenceDirs` to `["app", "Modules/*/app", "routes"]`.
+
+**Override `referenceDirs` explicitly if you need finer control:**
+```json
+{
+  "scanDirs":      ["app", "Modules/*/app"],
+  "referenceDirs": ["app", "routes", "Modules/*/app", "Modules/*/routes"]
+}
+```
+
 ## Editor setup
 
-### Neovim
+### Neovim (minimal)
 
 ```lua
 vim.lsp.start({
@@ -88,9 +120,25 @@ vim.lsp.start({
 })
 ```
 
+### Neovim (modular project)
+
+```lua
+vim.lsp.start({
+  name = 'laravel-lsp',
+  cmd = { vim.fn.exepath('laravel-lsp') },
+  root_dir = vim.fs.root(0, { 'artisan', 'composer.json' }),
+  filetypes = { 'php' },
+  init_options = {
+    -- referenceDirs auto-derives to { 'app', 'Modules/*/app', 'routes' }
+    scanDirs = { 'app', 'Modules/*/app' },
+  },
+})
+```
+
 ### VS Code
 
-Use any extension that accepts a generic LSP server and point it at the binary.
+Use any extension that accepts a generic LSP server, point it at the binary,
+and pass `initializationOptions` with the fields above.
 
 ## Debug command
 
