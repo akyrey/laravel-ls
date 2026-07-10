@@ -8,8 +8,9 @@ import (
 	"github.com/akyrey/laravel-lsp/internal/phpnode"
 )
 
-// arrayProps maps PHP property names to their AttributeKind.
-var arrayProps = map[string]AttributeKind{
+// ArrayPropKinds maps PHP property names to their AttributeKind.
+// Exported so the LSP layer can detect these properties without duplicating the list.
+var ArrayPropKinds = map[string]AttributeKind{
 	"fillable": FillableArray,
 	"casts":    CastArray,
 	"appends":  AppendsArray,
@@ -44,7 +45,7 @@ func extractArrayProperties(path string, classNode *ts.Node, src []byte) []Model
 			// variable_name text includes "$", e.g. "$fillable" — strip it.
 			propName := strings.TrimPrefix(phpnode.NodeText(nameNode, src), "$")
 
-			kind, ok := arrayProps[propName]
+			kind, ok := ArrayPropKinds[propName]
 			if !ok {
 				continue
 			}
@@ -80,27 +81,56 @@ func extractArrayProperties(path string, classNode *ts.Node, src []byte) []Model
 // For $casts the key is the exposed name (associative: 'col' => 'type').
 // For $fillable / $appends / $hidden the value is the name (sequential list).
 func arrayItemName(kind AttributeKind, item *ts.Node, src []byte) string {
-	// Collect string nodes in order (ignoring "=>" and other punctuation).
+	name, _ := arrayItemNameAndNode(kind, item, src)
+	return name
+}
+
+// arrayItemNameAndNode is like arrayItemName but also returns the string node
+// that contains the exposed attribute name (for offset-based lookups).
+func arrayItemNameAndNode(kind AttributeKind, item *ts.Node, src []byte) (string, *ts.Node) {
+	var strNodes []*ts.Node
 	var vals []string
 	for i := uint(0); i < item.ChildCount(); i++ {
 		child := item.Child(i)
 		if child.Kind() == "string" {
+			strNodes = append(strNodes, child)
 			vals = append(vals, stringValue(child, src))
 		}
 	}
 	switch kind {
 	case CastArray:
-		// Key is the exposed name: 'col' => 'cast_type'
 		if len(vals) >= 2 {
-			return vals[0]
+			return vals[0], strNodes[0]
 		}
 	default:
-		// Value is the exposed name: 'col'
 		if len(vals) > 0 {
-			return vals[len(vals)-1]
+			return vals[len(vals)-1], strNodes[len(strNodes)-1]
 		}
 	}
-	return ""
+	return "", nil
+}
+
+// ArrayItemAtOffset returns the exposed attribute name and the string node if
+// offset falls within a relevant string element of valueNode
+// (an array_creation_expression). Returns ("", nil) when no match.
+func ArrayItemAtOffset(kind AttributeKind, valueNode *ts.Node, src []byte, offset int) (string, *ts.Node) {
+	if valueNode == nil || valueNode.Kind() != "array_creation_expression" {
+		return "", nil
+	}
+	for i := uint(0); i < valueNode.ChildCount(); i++ {
+		item := valueNode.Child(i)
+		if item.Kind() != "array_element_initializer" {
+			continue
+		}
+		name, strNode := arrayItemNameAndNode(kind, item, src)
+		if name == "" || strNode == nil {
+			continue
+		}
+		if offset >= int(strNode.StartByte()) && offset < int(strNode.EndByte()) {
+			return name, strNode
+		}
+	}
+	return "", nil
 }
 
 // stringValue extracts the unquoted content of a PHP string literal node.

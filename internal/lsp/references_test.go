@@ -92,6 +92,108 @@ func TestReferences_EloquentFromMethodName(t *testing.T) {
 	}
 }
 
+func TestReferences_EloquentFromFillableString(t *testing.T) {
+	modelsRoot := filepath.Join("..", "..", "testdata", "models")
+	bindings := container.NewBindingIndex()
+	models, err := eloquent.Walk(modelsRoot, []string{"."})
+	if err != nil {
+		t.Fatalf("eloquent.Walk: %v", err)
+	}
+
+	userPath := filepath.Join(modelsRoot, "User.php")
+	src, err := os.ReadFile(userPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	// Cursor on 'email_address' inside $fillable = ['email_address', ...]
+	needle := []byte("fillable = ['email_address'")
+	idx := bytes.Index(src, needle)
+	if idx < 0 {
+		t.Fatal("needle not found in fixture")
+	}
+	offset := idx + len("fillable = ['") // on 'e' of 'email_address'
+
+	sym := identifySymbol(src, userPath, offset, bindings, models)
+	if sym == nil {
+		t.Fatal("identifySymbol returned nil — cursor on $fillable string not recognised")
+	}
+	if !sym.isEloquent() {
+		t.Fatalf("expected Eloquent symbol, got %+v", sym)
+	}
+	if sym.propName != "email_address" {
+		t.Errorf("want propName=email_address, got %q", sym.propName)
+	}
+}
+
+func TestReferences_EloquentFromCastsKey(t *testing.T) {
+	modelsRoot := filepath.Join("..", "..", "testdata", "models")
+	bindings := container.NewBindingIndex()
+	models, err := eloquent.Walk(modelsRoot, []string{"."})
+	if err != nil {
+		t.Fatalf("eloquent.Walk: %v", err)
+	}
+
+	userPath := filepath.Join(modelsRoot, "User.php")
+	src, err := os.ReadFile(userPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	// Cursor on 'email_verified_at' (key) inside $casts = ['email_verified_at' => 'datetime']
+	needle := []byte("'email_verified_at' =>")
+	idx := bytes.Index(src, needle)
+	if idx < 0 {
+		t.Fatal("needle not found in fixture")
+	}
+	offset := idx + 1 // inside 'email_verified_at', past opening quote
+
+	sym := identifySymbol(src, userPath, offset, bindings, models)
+	if sym == nil {
+		t.Fatal("identifySymbol returned nil — cursor on $casts key not recognised")
+	}
+	if !sym.isEloquent() {
+		t.Fatalf("expected Eloquent symbol, got %+v", sym)
+	}
+	if sym.propName != "email_verified_at" {
+		t.Errorf("want propName=email_verified_at, got %q", sym.propName)
+	}
+}
+
+func TestReferences_EloquentFromLegacyGetterName(t *testing.T) {
+	modelsRoot := filepath.Join("..", "..", "testdata", "models")
+	bindings := container.NewBindingIndex()
+	models, err := eloquent.Walk(modelsRoot, []string{"."})
+	if err != nil {
+		t.Fatalf("eloquent.Walk: %v", err)
+	}
+
+	userPath := filepath.Join(modelsRoot, "User.php")
+	src, err := os.ReadFile(userPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	// Cursor on "getFirstNameAttribute" (the method name in its declaration)
+	needle := []byte("function getFirstNameAttribute(")
+	idx := bytes.Index(src, needle)
+	if idx < 0 {
+		t.Fatal("function getFirstNameAttribute not found in fixture")
+	}
+	offset := idx + len("function ") // on 'g' of getFirstNameAttribute
+
+	sym := identifySymbol(src, userPath, offset, bindings, models)
+	if sym == nil {
+		t.Fatal("identifySymbol returned nil for legacy getter method name")
+	}
+	if !sym.isEloquent() {
+		t.Fatalf("expected Eloquent symbol, got %+v", sym)
+	}
+	if sym.propName != "first_name" {
+		t.Errorf("want propName=first_name, got %q", sym.propName)
+	}
+}
+
 func TestReferences_ContainerFromClassConst(t *testing.T) {
 	bindingsRoot := filepath.Join("..", "..", "testdata", "bindings")
 	bindings, err := container.Walk(bindingsRoot, []string{"."})

@@ -140,7 +140,7 @@ func resolveExprType(
 		}
 		propName := phpnode.NodeText(propNode, src)
 		for _, a := range cat.ByExposed[propName] {
-			if a.Kind == eloquent.Relationship && a.RelatedFQN != "" {
+			if a.RelatedFQN != "" {
 				return a.RelatedFQN
 			}
 		}

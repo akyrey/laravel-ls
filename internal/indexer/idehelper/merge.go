@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 
 	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
 	"github.com/akyrey/laravel-lsp/internal/phpnode"
@@ -15,10 +16,26 @@ import (
 
 var (
 	// @property[-read|-write] <type> $<name>
-	propertyTagRe = regexp.MustCompile(`@property(?:-read|-write)?[^\$]*\$(\w+)`)
+	// Group 1 = type, Group 2 = name.
+	propertyTagRe = regexp.MustCompile(`@property(?:-read|-write)?\s+(\S+)\s+\$(\w+)`)
 	// @method [static] <returnType> <name>(...)
 	methodTagRe = regexp.MustCompile(`@method\b[^\(]+\b(\w+)\s*\(`)
 )
+
+// phpPrimitives is the set of PHP built-in types that are never class references.
+var phpPrimitives = map[string]bool{
+	"string": true, "int": true, "integer": true, "float": true, "double": true,
+	"bool": true, "boolean": true, "array": true, "null": true, "void": true,
+	"mixed": true, "never": true, "object": true, "iterable": true, "callable": true,
+	"false": true, "true": true, "self": true, "static": true, "parent": true,
+	"resource": true,
+}
+
+// ideProperty holds the name and optional type string for a @property tag.
+type ideProperty struct {
+	name    string
+	typeStr string
+}
 
 // Merge parses _ide_helper_models.php (if present at path) and adds
 // SourceIdeHelper entries into idx for any attribute name not already present
@@ -87,16 +104,22 @@ func (v *mergeVisitor) VisitClass(n phpwalk.ClassInfo) {
 		v.idx.Add(cat)
 	}
 
-	for _, name := range props {
-		if hasSourceAST(cat, name) {
+	for _, pe := range props {
+		if hasSourceAST(cat, pe.name) {
 			continue
 		}
-		cat.ByExposed[name] = append(cat.ByExposed[name], eloquent.ModelAttribute{
-			ExposedName: name,
+		attr := eloquent.ModelAttribute{
+			ExposedName: pe.name,
 			Kind:        eloquent.IdeHelperProperty,
 			Source:      eloquent.SourceIdeHelper,
 			// Zero Location: policy is "return nothing for ide-helper-only names".
-		})
+		}
+		// For class-typed properties, resolve the FQN so the chain resolver
+		// ($this->rel->attr) can follow the hop even without an AST relationship.
+		if relFQN := resolveClassType(pe.typeStr, v.fc); relFQN != "" {
+			attr.RelatedFQN = relFQN
+		}
+		cat.ByExposed[pe.name] = append(cat.ByExposed[pe.name], attr)
 	}
 
 	for _, name := range methods {
@@ -110,6 +133,21 @@ func (v *mergeVisitor) VisitClass(n phpwalk.ClassInfo) {
 			Source:      eloquent.SourceIdeHelper,
 		})
 	}
+}
+
+// resolveClassType returns the FQN for a PHP type string if it looks like a
+// class reference (not a primitive, not a union/generic). Returns "" otherwise.
+func resolveClassType(typeStr string, fc *phputil.FileContext) phputil.FQN {
+	// Strip nullable prefix.
+	typeStr = strings.TrimPrefix(typeStr, "?")
+	// Skip unions, generics, and array shapes — too complex to resolve safely.
+	if strings.ContainsAny(typeStr, "|&<>[") {
+		return ""
+	}
+	if phpPrimitives[strings.ToLower(typeStr)] {
+		return ""
+	}
+	return fc.Resolve(typeStr)
 }
 
 // hasSourceAST reports whether cat already has a SourceAST entry for name.
@@ -151,10 +189,11 @@ func extractDocComment(src []byte, before int) string {
 	return string(chunk[start:end])
 }
 
-// parseDocComment extracts @property and @method names from a doc-comment string.
-func parseDocComment(doc string) (properties, methods []string) {
+// parseDocComment extracts @property entries (with types) and @method names.
+func parseDocComment(doc string) (properties []ideProperty, methods []string) {
 	for _, m := range propertyTagRe.FindAllStringSubmatch(doc, -1) {
-		properties = append(properties, m[1])
+		// m[1] = type string, m[2] = property name
+		properties = append(properties, ideProperty{typeStr: m[1], name: m[2]})
 	}
 	for _, m := range methodTagRe.FindAllStringSubmatch(doc, -1) {
 		methods = append(methods, m[1])

@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Post extends Model
 {
@@ -18,5 +19,11 @@ class Post extends Model
     public function author()
     {
         return $this->belongsTo(User::class);
+    }
+
+    // Typed relationship with chained query builder call.
+    public function primaryAuthor(): BelongsTo
+    {
+        return $this->belongsTo(User::class)->where('active', true);
     }
 }

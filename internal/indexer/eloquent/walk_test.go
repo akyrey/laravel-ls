@@ -235,6 +235,74 @@ func TestRelationship_UntypedMethod(t *testing.T) {
 	}
 }
 
+func TestRelationship_ChainedMethodBody(t *testing.T) {
+	t.Parallel()
+	idx := walkFixtures(t)
+
+	cat := idx.Lookup("App\\Models\\Post")
+	if cat == nil {
+		t.Fatal("Post model not indexed")
+	}
+
+	// primaryAuthor() has `return $this->belongsTo(User::class)->where('active', true)`.
+	// The chained ->where(...) must not prevent RelatedFQN extraction.
+	entries := cat.ByExposed["primaryAuthor"]
+	found := false
+	for _, a := range entries {
+		if a.Kind == eloquent.Relationship && a.MethodName == "primaryAuthor" {
+			found = true
+			if a.RelatedFQN != "App\\Models\\User" {
+				t.Errorf("RelatedFQN = %q, want %q", a.RelatedFQN, "App\\Models\\User")
+			}
+		}
+	}
+	if !found {
+		t.Errorf("chained Relationship for primaryAuthor not found; got %+v", entries)
+	}
+}
+
+func TestLegacyAccessor_MethodNameStored(t *testing.T) {
+	t.Parallel()
+	idx := walkFixtures(t)
+
+	cat := idx.Lookup("App\\Models\\User")
+	if cat == nil {
+		t.Fatal("User model not indexed")
+	}
+
+	// getFirstNameAttribute → ExposedName "first_name", MethodName must be set.
+	for _, a := range cat.ByExposed["first_name"] {
+		if a.Kind == eloquent.LegacyAccessor {
+			if a.MethodName != "getFirstNameAttribute" {
+				t.Errorf("LegacyAccessor MethodName = %q, want %q", a.MethodName, "getFirstNameAttribute")
+			}
+			return
+		}
+	}
+	t.Error("LegacyAccessor for first_name not found")
+}
+
+func TestLegacyMutator_MethodNameStored(t *testing.T) {
+	t.Parallel()
+	idx := walkFixtures(t)
+
+	cat := idx.Lookup("App\\Models\\Post")
+	if cat == nil {
+		t.Fatal("Post model not indexed")
+	}
+
+	// setTitleAttribute → ExposedName "title", MethodName must be set.
+	for _, a := range cat.ByExposed["title"] {
+		if a.Kind == eloquent.LegacyMutator {
+			if a.MethodName != "setTitleAttribute" {
+				t.Errorf("LegacyMutator MethodName = %q, want %q", a.MethodName, "setTitleAttribute")
+			}
+			return
+		}
+	}
+	t.Error("LegacyMutator for title not found")
+}
+
 func TestNonModelNotIndexed(t *testing.T) {
 	t.Parallel()
 	idx := walkFixtures(t)

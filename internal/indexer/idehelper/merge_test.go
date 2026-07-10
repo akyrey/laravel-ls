@@ -95,6 +95,52 @@ func TestMerge_ASTWinsOverIdeHelper(t *testing.T) {
 	}
 }
 
+func TestMerge_ClassTypedPropertyGetsRelatedFQN(t *testing.T) {
+	idx := eloquent.NewModelIndex()
+	if err := idehelper.Merge(fixtureFile, idx); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+
+	cat := idx.Lookup("App\\Models\\User")
+	if cat == nil {
+		t.Fatal("App\\Models\\User not in index after merge")
+	}
+
+	// @property-read \App\Models\Post $latest_post → RelatedFQN should be resolved.
+	entries := cat.ByExposed["latest_post"]
+	found := false
+	for _, a := range entries {
+		if a.Kind == eloquent.IdeHelperProperty {
+			found = true
+			if a.RelatedFQN != "App\\Models\\Post" {
+				t.Errorf("RelatedFQN = %q, want %q", a.RelatedFQN, "App\\Models\\Post")
+			}
+		}
+	}
+	if !found {
+		t.Errorf("IdeHelperProperty for latest_post not found; got %+v", entries)
+	}
+}
+
+func TestMerge_PrimitivePropertyHasNoRelatedFQN(t *testing.T) {
+	idx := eloquent.NewModelIndex()
+	if err := idehelper.Merge(fixtureFile, idx); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+
+	cat := idx.Lookup("App\\Models\\User")
+	if cat == nil {
+		t.Fatal("App\\Models\\User not in index after merge")
+	}
+
+	// @property string $email_address → RelatedFQN must be empty (string is a primitive).
+	for _, a := range cat.ByExposed["email_address"] {
+		if a.Source == eloquent.SourceIdeHelper && a.RelatedFQN != "" {
+			t.Errorf("primitive @property should have empty RelatedFQN, got %q", a.RelatedFQN)
+		}
+	}
+}
+
 func TestMerge_AbsentFileIsNoOp(t *testing.T) {
 	idx := eloquent.NewModelIndex()
 	if err := idehelper.Merge("/nonexistent/_ide_helper_models.php", idx); err != nil {

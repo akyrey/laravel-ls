@@ -160,6 +160,29 @@ func (v *symFinder) VisitClassMethod(n phpwalk.MethodInfo) {
 	}
 }
 
+func (v *symFinder) VisitProperty(n phpwalk.PropertyInfo) {
+	kind, ok := eloquent.ArrayPropKinds[n.PropName]
+	if !ok || n.ValueRaw == nil {
+		return
+	}
+	if v.encClass == "" {
+		return
+	}
+	cat := v.models.Lookup(v.encClass)
+	if cat == nil {
+		return
+	}
+	name, strNode := eloquent.ArrayItemAtOffset(kind, n.ValueRaw, n.Src, v.offset)
+	if name == "" {
+		return
+	}
+	if _, exists := cat.ByExposed[name]; !exists {
+		return
+	}
+	v.sym = &refSymbol{modelFQN: v.encClass, propName: name}
+	v.tokenLoc = phpnode.FromNode("", strNode)
+}
+
 func (v *symFinder) VisitPropertyFetch(n phpwalk.PropertyFetchInfo) {
 	if v.offset < n.PropLocation.StartByte || v.offset >= n.PropLocation.EndByte {
 		return

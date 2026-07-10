@@ -106,6 +106,7 @@ func extractMethods(path string, classNode *ts.Node, src []byte, fc *phputil.Fil
 			exposed := phputil.Snake(strings.ToLower(m2[1][:1]) + m2[1][1:])
 			out = append(out, ModelAttribute{
 				ExposedName: exposed,
+				MethodName:  methodName,
 				Kind:        LegacyAccessor,
 				Source:      SourceAST,
 				Location:    loc,
@@ -118,6 +119,7 @@ func extractMethods(path string, classNode *ts.Node, src []byte, fc *phputil.Fil
 			exposed := phputil.Snake(strings.ToLower(m2[1][:1]) + m2[1][1:])
 			out = append(out, ModelAttribute{
 				ExposedName: exposed,
+				MethodName:  methodName,
 				Kind:        LegacyMutator,
 				Source:      SourceAST,
 				Location:    loc,
@@ -130,7 +132,8 @@ func extractMethods(path string, classNode *ts.Node, src []byte, fc *phputil.Fil
 
 // extractRelatedFQN inspects the method body for the pattern
 // `return $this->relationMethod(RelatedClass::class, ...)` and returns the
-// resolved FQN of RelatedClass. Returns "" when the pattern is not matched.
+// resolved FQN of RelatedClass. Handles chained calls such as
+// `return $this->hasOne(Sku::class)->where(...)`. Returns "" when not matched.
 func extractRelatedFQN(methodNode *ts.Node, src []byte, fc *phputil.FileContext) phputil.FQN {
 	bodyNode := methodNode.ChildByFieldName("body")
 	if bodyNode == nil {
@@ -141,36 +144,40 @@ func extractRelatedFQN(methodNode *ts.Node, src []byte, fc *phputil.FileContext)
 		if stmt.Kind() != "return_statement" {
 			continue
 		}
-		// Find the member_call_expression inside the return statement.
 		for j := uint(0); j < stmt.ChildCount(); j++ {
 			expr := stmt.Child(j)
 			if expr.Kind() != "member_call_expression" {
 				continue
 			}
-			// Check $this->relationMethod(...)
-			objNode := expr.ChildByFieldName("object")
-			if objNode == nil || objNode.Kind() != "variable_name" {
-				continue
-			}
-			if phpnode.NodeText(objNode, src) != "$this" {
-				continue
-			}
-			nameNode := expr.ChildByFieldName("name")
-			if nameNode == nil || !relationBuilderMethods[phpnode.NodeText(nameNode, src)] {
-				continue
-			}
-			argsNode := expr.ChildByFieldName("arguments")
-			if argsNode == nil {
-				continue
-			}
-			args := phpwalk.ArgExprs(argsNode, src)
-			if len(args) == 0 {
-				continue
-			}
-			if fqn := phpwalk.ClassConstFQN(args[0], src, fc); fqn != "" {
+			if fqn := relationCallFQN(expr, src, fc); fqn != "" {
 				return fqn
 			}
 		}
+	}
+	return ""
+}
+
+// relationCallFQN walks down a chain of member_call_expression nodes until it
+// finds $this->relationMethod(Class::class, ...) and returns the related FQN.
+// This handles patterns like $this->hasOne(Foo::class)->where(...)->withDefault(...).
+func relationCallFQN(expr *ts.Node, src []byte, fc *phputil.FileContext) phputil.FQN {
+	for expr != nil && expr.Kind() == "member_call_expression" {
+		objNode := expr.ChildByFieldName("object")
+		nameNode := expr.ChildByFieldName("name")
+		if objNode != nil && nameNode != nil &&
+			objNode.Kind() == "variable_name" &&
+			phpnode.NodeText(objNode, src) == "$this" &&
+			relationBuilderMethods[phpnode.NodeText(nameNode, src)] {
+			argsNode := expr.ChildByFieldName("arguments")
+			if argsNode != nil {
+				if args := phpwalk.ArgExprs(argsNode, src); len(args) > 0 {
+					if fqn := phpwalk.ClassConstFQN(args[0], src, fc); fqn != "" {
+						return fqn
+					}
+				}
+			}
+		}
+		expr = objNode
 	}
 	return ""
 }

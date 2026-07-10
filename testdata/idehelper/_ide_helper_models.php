@@ -15,6 +15,7 @@ namespace App\Models {
      * @property \Carbon\Carbon $created_at
      * @property \Carbon\Carbon $updated_at
      * @property-read int|null $roles_count
+     * @property-read \App\Models\Post $latest_post
      * @method static \Illuminate\Database\Eloquent\Builder active()
      * @method static \Illuminate\Database\Eloquent\Builder|User newModelQuery()
      */
