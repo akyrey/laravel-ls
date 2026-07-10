@@ -104,7 +104,7 @@ func TestRename_EloquentBuildWorkspaceEdit(t *testing.T) {
 	reps := scanRenameRefs(modelsRoot, []string{"."}, sym, docs, models, "new_prop")
 	reps = append(reps, collectDeclReplacements(sym, models, "new_prop", docs)...)
 
-	edit := buildWorkspaceEdit(reps)
+	edit := buildWorkspaceEdit(reps, docs)
 	if edit == nil {
 		t.Fatal("buildWorkspaceEdit returned nil")
 	}

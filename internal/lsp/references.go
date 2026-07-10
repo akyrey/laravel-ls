@@ -42,7 +42,7 @@ func (s *Server) References(_ *glsp.Context, p *protocol.ReferenceParams) ([]pro
 	locs := scanReferences(root, s.effectiveReferenceDirs(root), sym, s.docs, models)
 
 	if p.Context.IncludeDeclaration {
-		locs = append(locs, declarationLocations(sym, bindings, models)...)
+		locs = append(locs, declarationLocations(sym, bindings, models, s.docs)...)
 	}
 	if len(locs) == 0 {
 		return nil, nil
@@ -252,7 +252,7 @@ func scanReferences(root string, dirs []string, sym *refSymbol, docs *DocumentSt
 			}
 			phpwalk.Walk(path, src, tree, rv)
 			for _, loc := range rv.locations {
-				locs = append(locs, toLSPLocation(loc))
+				locs = append(locs, toLSPLocation(loc, docs))
 			}
 			return nil
 		})
@@ -260,7 +260,7 @@ func scanReferences(root string, dirs []string, sym *refSymbol, docs *DocumentSt
 	return locs
 }
 
-func declarationLocations(sym *refSymbol, bindings *container.BindingIndex, models *eloquent.ModelIndex) []protocol.Location {
+func declarationLocations(sym *refSymbol, bindings *container.BindingIndex, models *eloquent.ModelIndex, docs *DocumentStore) []protocol.Location {
 	var locs []protocol.Location
 	if sym.isEloquent() {
 		cat := models.Lookup(sym.modelFQN)
@@ -271,7 +271,7 @@ func declarationLocations(sym *refSymbol, bindings *container.BindingIndex, mode
 			sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Kind < sorted[j].Kind })
 			for _, a := range sorted {
 				if !a.Location.Zero() {
-					locs = append(locs, toLSPLocation(a.Location))
+					locs = append(locs, toLSPLocation(a.Location, docs))
 				}
 			}
 		}
@@ -279,7 +279,7 @@ func declarationLocations(sym *refSymbol, bindings *container.BindingIndex, mode
 	if sym.isContainer() {
 		for _, b := range bindings.Lookup(sym.abstractFQN) {
 			if !b.Location.Zero() {
-				locs = append(locs, toLSPLocation(b.Location))
+				locs = append(locs, toLSPLocation(b.Location, docs))
 			}
 		}
 	}

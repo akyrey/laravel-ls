@@ -30,7 +30,7 @@ func (s *Server) Definition(_ *glsp.Context, p *protocol.DefinitionParams) (any,
 
 	path := URIToPath(p.TextDocument.URI)
 	offset := positionToByteOffset(src, p.Position)
-	locs := findDefinition(src, path, offset, bindings, models)
+	locs := findDefinition(src, path, offset, bindings, models, s.docs)
 	if len(locs) == 0 {
 		return nil, nil
 	}
@@ -38,13 +38,15 @@ func (s *Server) Definition(_ *glsp.Context, p *protocol.DefinitionParams) (any,
 }
 
 // findDefinition is the pure-function core of Definition, testable without an
-// LSP client.
+// LSP client. docs resolves jump-target locations against open buffers before
+// falling back to disk.
 func findDefinition(
 	src []byte,
 	path string,
 	offset int,
 	bindings *container.BindingIndex,
 	models *eloquent.ModelIndex,
+	docs *DocumentStore,
 ) []protocol.Location {
 	tree, err := phpnode.ParseBytes(src)
 	if err != nil {
@@ -59,6 +61,7 @@ func findDefinition(
 		offset:   offset,
 		bindings: bindings,
 		models:   models,
+		docs:     docs,
 	}
 	phpwalk.Walk(path, src, tree, dv)
 	return dv.locations
@@ -73,6 +76,7 @@ type defVisitor struct {
 	offset   int
 	bindings *container.BindingIndex
 	models   *eloquent.ModelIndex
+	docs     *DocumentStore
 
 	encClass     phputil.FQN
 	encMethod    *phpwalk.MethodInfo
@@ -163,7 +167,7 @@ func (v *defVisitor) appendContainerLocations(fqn phputil.FQN) {
 	}
 	for _, b := range v.bindings.Lookup(fqn) {
 		if !b.Location.Zero() {
-			v.locations = append(v.locations, toLSPLocation(b.Location))
+			v.locations = append(v.locations, toLSPLocation(b.Location, v.docs))
 		}
 	}
 }
@@ -184,7 +188,7 @@ func (v *defVisitor) appendEloquentLocations(modelFQN phputil.FQN, propName stri
 	})
 	for _, a := range sorted {
 		if !a.Location.Zero() {
-			v.locations = append(v.locations, toLSPLocation(a.Location))
+			v.locations = append(v.locations, toLSPLocation(a.Location, v.docs))
 		}
 	}
 }

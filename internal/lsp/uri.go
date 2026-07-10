@@ -28,9 +28,11 @@ func PathToURI(path string) protocol.DocumentUri {
 }
 
 // toLSPLocation converts a phputil.Location to an LSP protocol.Location.
-// It reads the target file from disk to compute the correct UTF-16 column.
+// It reads the target file through docs (the in-memory buffer when the file
+// is open, disk otherwise) so the computed column stays consistent with
+// whatever content produced loc's byte offsets — including unsaved edits.
 // On any I/O error the column falls back to 0.
-func toLSPLocation(loc phputil.Location) protocol.Location {
+func toLSPLocation(loc phputil.Location, docs *DocumentStore) protocol.Location {
 	line := uint32(0)
 	if loc.StartLine > 0 {
 		line = uint32(loc.StartLine - 1)
@@ -38,7 +40,7 @@ func toLSPLocation(loc phputil.Location) protocol.Location {
 
 	var col uint32
 	if loc.StartByte > 0 {
-		if src, err := os.ReadFile(loc.Path); err == nil {
+		if src, err := docs.Read(PathToURI(loc.Path)); err == nil {
 			col = utf16ColFromFileOffset(src, loc.StartLine, loc.StartByte)
 		}
 	}

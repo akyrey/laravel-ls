@@ -75,7 +75,7 @@ func (s *Server) Rename(_ *glsp.Context, p *protocol.RenameParams) (*protocol.Wo
 	if len(reps) == 0 {
 		return nil, nil
 	}
-	return buildWorkspaceEdit(reps), nil
+	return buildWorkspaceEdit(reps, s.docs), nil
 }
 
 // — Reference-site scanning —
@@ -288,13 +288,13 @@ func methodNameFor(kind eloquent.AttributeKind, newName string) string {
 
 // — WorkspaceEdit builder —
 
-func buildWorkspaceEdit(reps []textReplacement) *protocol.WorkspaceEdit {
+func buildWorkspaceEdit(reps []textReplacement, docs *DocumentStore) *protocol.WorkspaceEdit {
 	changes := make(map[protocol.DocumentUri][]protocol.TextEdit)
 	srcCache := make(map[string][]byte)
 
 	for _, r := range reps {
 		if _, ok := srcCache[r.loc.Path]; !ok {
-			src, err := os.ReadFile(r.loc.Path)
+			src, err := docs.Read(PathToURI(r.loc.Path))
 			if err != nil {
 				continue
 			}
