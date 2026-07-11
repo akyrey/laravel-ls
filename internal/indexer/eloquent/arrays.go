@@ -89,22 +89,32 @@ func arrayItemName(kind AttributeKind, item *ts.Node, src []byte) string {
 // that contains the exposed attribute name (for offset-based lookups).
 func arrayItemNameAndNode(kind AttributeKind, item *ts.Node, src []byte) (string, *ts.Node) {
 	var strNodes []*ts.Node
-	var vals []string
+	arrowIdx := -1
+	firstStrIdx := -1
 	for i := uint(0); i < item.ChildCount(); i++ {
 		child := item.Child(i)
-		if child.Kind() == "string" {
+		switch child.Kind() {
+		case "string":
+			if firstStrIdx < 0 {
+				firstStrIdx = int(i)
+			}
 			strNodes = append(strNodes, child)
-			vals = append(vals, stringValue(child, src))
+		case "=>":
+			arrowIdx = int(i)
 		}
 	}
 	switch kind {
 	case CastArray:
-		if len(vals) >= 2 {
-			return vals[0], strNodes[0]
+		// Associative: 'col' => <value>. The key string is the exposed name;
+		// the value may be any expression ('datetime', Enum::class, an array
+		// callable, ...), so only require a string key before the arrow.
+		if arrowIdx >= 0 && firstStrIdx >= 0 && firstStrIdx < arrowIdx {
+			return stringValue(strNodes[0], src), strNodes[0]
 		}
 	default:
-		if len(vals) > 0 {
-			return vals[len(vals)-1], strNodes[len(strNodes)-1]
+		if len(strNodes) > 0 {
+			last := strNodes[len(strNodes)-1]
+			return stringValue(last, src), last
 		}
 	}
 	return "", nil
