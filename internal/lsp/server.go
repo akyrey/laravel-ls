@@ -178,7 +178,8 @@ func (s *Server) Initialize(_ *glsp.Context, p *protocol.InitializeParams) (any,
 			CompletionProvider: &protocol.CompletionOptions{
 				TriggerCharacters: triggerChars,
 			},
-			DocumentSymbolProvider: true,
+			DocumentSymbolProvider:  true,
+			WorkspaceSymbolProvider: true,
 		},
 		ServerInfo: &protocol.InitializeResultServerInfo{
 			Name:    "laravel-lsp",

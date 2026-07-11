@@ -52,13 +52,14 @@ func buildHandler(s *lsp.Server) *protocol.Handler {
 		TextDocumentDidChange: s.DidChange,
 		TextDocumentDidClose:  s.DidClose,
 
-		TextDocumentDefinition:    s.Definition,
-		TextDocumentReferences:    s.References,
-		TextDocumentHover:         s.Hover,
-		TextDocumentCompletion:    s.Completion,
-		TextDocumentRename:        s.Rename,
-		TextDocumentPrepareRename: s.PrepareRename,
-		TextDocumentCodeAction:    s.CodeAction,
+		TextDocumentDefinition:     s.Definition,
+		TextDocumentReferences:     s.References,
+		TextDocumentHover:          s.Hover,
+		TextDocumentCompletion:     s.Completion,
+		TextDocumentRename:         s.Rename,
+		TextDocumentPrepareRename:  s.PrepareRename,
+		TextDocumentCodeAction:     s.CodeAction,
 		TextDocumentDocumentSymbol: s.DocumentSymbol,
+		WorkspaceSymbol:            s.WorkspaceSymbol,
 	}
 }

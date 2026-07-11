@@ -109,6 +109,7 @@ internal/
     diagnostics.go              # textDocument/publishDiagnostics
     codeaction.go               # textDocument/codeAction
     symbols.go                  # textDocument/documentSymbol
+    workspacesymbol.go          # workspace/symbol — project-wide search
     scope.go                    # $var → FQN inference (assignments + typed params)
     documents.go                # DocumentStore — in-memory cache with disk fallback
     uri.go                      # URI/path conversion, UTF-16 position helpers
@@ -287,6 +288,16 @@ byte), matching LSP's exclusive range end. `toLSPRange` uses it directly.
     as `SymbolKindMethod`; array-entry attributes appear as `SymbolKindProperty`.
     Returns nil for non-model files so the editor falls through to other
     providers (Intelephense, Psalm, etc.).
+
+18. **`workspace/symbol`** — project-wide symbol search, unlike
+    `documentSymbol` which is scoped to one open file. Searches every
+    indexed Eloquent attribute (across all models) and every container
+    binding (across all `ServiceProvider`s), filtered by a case-insensitive
+    substring match against the attribute/exposed name, the owning model's
+    class name, or the binding's abstract/concrete FQN. An empty query
+    (which clients may send to request everything) returns every known
+    symbol. Entries with no resolvable jump target (e.g. ide-helper-only
+    attributes) are skipped.
 
 ## What is not yet implemented
 
