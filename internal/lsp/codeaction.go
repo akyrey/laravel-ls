@@ -102,50 +102,68 @@ func (s *Server) CodeAction(_ *glsp.Context, p *protocol.CodeActionParams) (any,
 			continue
 		}
 
-		av := newArrayPropVisitor(cat.Path)
-		if err := av.scan(src); err != nil {
-			continue
-		}
-
-		kind := protocol.CodeActionKindQuickFix
-		for _, qf := range arrayQuickFixes {
-			ins, ok := av.insertions[qf.phpProp]
-			if !ok {
-				continue
-			}
-			line, col := byteOffsetToLineCol(src, ins.insertByte)
-			pos := protocol.Position{Line: uint32(line), Character: uint32(col)}
-			uri := PathToURI(cat.Path)
-			edit := &protocol.WorkspaceEdit{
-				Changes: map[protocol.DocumentUri][]protocol.TextEdit{
-					uri: {{
-						Range:   protocol.Range{Start: pos, End: pos},
-						NewText: qf.newText(propName, ins.hasItems),
-					}},
-				},
-			}
-			actions = append(actions, protocol.CodeAction{
-				Title:       qf.title(propName, string(modelFQN)),
-				Kind:        &kind,
-				Diagnostics: []protocol.Diagnostic{diag},
-				Edit:        edit,
-			})
-		}
-
-		if edit := buildCreateAccessorEdit(cat.Path, src, propName); edit != nil {
-			actions = append(actions, protocol.CodeAction{
-				Title:       fmt.Sprintf("Generate accessor for '%s'", propName),
-				Kind:        &kind,
-				Diagnostics: []protocol.Diagnostic{diag},
-				Edit:        edit,
-			})
-		}
+		actions = append(actions, codeActionsForDiagnostic(diag, cat.Path, src, propName, modelFQN)...)
 	}
 
 	if len(actions) == 0 {
 		return nil, nil
 	}
 	return actions, nil
+}
+
+// codeActionsForDiagnostic builds every quick-fix action for a single
+// "unknown property" diagnostic. It parses src exactly once and shares that
+// tree between the array-property scan and the accessor-insertion scan,
+// rather than each parsing (and closing) its own tree.
+func codeActionsForDiagnostic(diag protocol.Diagnostic, modelPath string, src []byte, propName string, modelFQN phputil.FQN) []protocol.CodeAction {
+	tree, err := phpnode.ParseBytes(src)
+	if err != nil {
+		return nil
+	}
+	defer tree.Close()
+
+	kind := protocol.CodeActionKindQuickFix
+	var actions []protocol.CodeAction
+	uri := PathToURI(modelPath)
+
+	av := newArrayPropVisitor(modelPath)
+	phpwalk.Walk(modelPath, src, tree, av)
+	for _, qf := range arrayQuickFixes {
+		ins, ok := av.insertions[qf.phpProp]
+		if !ok {
+			continue
+		}
+		line, col := byteOffsetToLineCol(src, ins.insertByte)
+		pos := protocol.Position{Line: uint32(line), Character: uint32(col)}
+		edit := &protocol.WorkspaceEdit{
+			Changes: map[protocol.DocumentUri][]protocol.TextEdit{
+				uri: {{
+					Range:   protocol.Range{Start: pos, End: pos},
+					NewText: qf.newText(propName, ins.hasItems),
+				}},
+			},
+		}
+		actions = append(actions, protocol.CodeAction{
+			Title:       qf.title(propName, string(modelFQN)),
+			Kind:        &kind,
+			Diagnostics: []protocol.Diagnostic{diag},
+			Edit:        edit,
+		})
+	}
+
+	accessorV := &accessorInsertVisitor{attributeRef: "\\" + string(eloquentAttributeFQN)}
+	phpwalk.Walk(modelPath, src, tree, accessorV)
+	if accessorV.found {
+		edit := buildCreateAccessorEditFromInsertPoint(modelPath, src, accessorV.insertByte, accessorV.attributeRef, propName)
+		actions = append(actions, protocol.CodeAction{
+			Title:       fmt.Sprintf("Generate accessor for '%s'", propName),
+			Kind:        &kind,
+			Diagnostics: []protocol.Diagnostic{diag},
+			Edit:        edit,
+		})
+	}
+
+	return actions
 }
 
 // buildAddToFillableEdit is kept for tests and external callers.
@@ -175,12 +193,22 @@ func buildAddToFillableEdit(modelPath string, src []byte, propName string) *prot
 // buildCreateAccessorEdit builds a WorkspaceEdit that appends a Laravel 9+
 // modern-accessor method stub for propName to the end of the class body in
 // modelPath. Returns nil when no class declaration is found in src.
+// Kept for tests and external callers; it parses src itself to find the
+// insertion point. When a tree is already available (e.g. CodeAction, which
+// shares one tree across several checks), call
+// buildCreateAccessorEditFromInsertPoint directly instead of re-parsing.
 func buildCreateAccessorEdit(modelPath string, src []byte, propName string) *protocol.WorkspaceEdit {
 	insertByte, attributeRef, ok := findAccessorInsertPoint(modelPath, src)
 	if !ok {
 		return nil
 	}
+	return buildCreateAccessorEditFromInsertPoint(modelPath, src, insertByte, attributeRef, propName)
+}
 
+// buildCreateAccessorEditFromInsertPoint builds the WorkspaceEdit given an
+// already-resolved insertion point and attribute reference, without parsing
+// src again.
+func buildCreateAccessorEditFromInsertPoint(modelPath string, src []byte, insertByte int, attributeRef, propName string) *protocol.WorkspaceEdit {
 	line, col := byteOffsetToLineCol(src, insertByte)
 	pos := protocol.Position{Line: uint32(line), Character: uint32(col)}
 	newText := fmt.Sprintf(
