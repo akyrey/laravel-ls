@@ -116,7 +116,7 @@ func (v *bindingCallVisitor) recordCallBinding(args []*ts.Node, src []byte, life
 	if len(args) < 1 {
 		return
 	}
-	abstract := extractClassConst(args[0], src, v.fc)
+	abstract := phpwalk.ClassConstFQN(args[0], src, v.fc)
 	if abstract == "" {
 		return
 	}
@@ -133,7 +133,7 @@ func (v *bindingCallVisitor) recordCallBinding(args []*ts.Node, src []byte, life
 	switch args[1].Kind() {
 	case "class_constant_access_expression":
 		b.Kind = BindCall
-		b.Concrete = extractClassConst(args[1], src, v.fc)
+		b.Concrete = phpwalk.ClassConstFQN(args[1], src, v.fc)
 	case "anonymous_function":
 		b.Kind = BindClosure
 		b.Concrete = concreteFromClosure(args[1], src, v.fc)
@@ -199,7 +199,7 @@ func extractAttrBindings(raw *ts.Node, src []byte, abstract phputil.FQN, fc *php
 			if len(args) == 0 {
 				continue
 			}
-			concrete := extractClassConst(args[0], src, fc)
+			concrete := phpwalk.ClassConstFQN(args[0], src, fc)
 			if concrete == "" {
 				continue
 			}
@@ -231,30 +231,6 @@ func isThisAppAccess(n *ts.Node, src []byte) bool {
 	}
 	nameNode := n.ChildByFieldName("name")
 	return nameNode != nil && phpnode.NodeText(nameNode, src) == "app"
-}
-
-// extractClassConst extracts the FQN from a class_constant_access_expression
-// like `StripeGateway::class`. Returns "" for anything else.
-func extractClassConst(n *ts.Node, src []byte, fc *phputil.FileContext) phputil.FQN {
-	if n == nil || n.Kind() != "class_constant_access_expression" {
-		return ""
-	}
-	var first, second string
-	for i := uint(0); i < n.ChildCount(); i++ {
-		child := n.Child(i)
-		if child.Kind() == "name" || child.Kind() == "qualified_name" {
-			if first == "" {
-				first = phpnode.NodeText(child, src)
-			} else {
-				second = phpnode.NodeText(child, src)
-				break
-			}
-		}
-	}
-	if second != "class" {
-		return ""
-	}
-	return fc.Resolve(first)
 }
 
 // concreteFromClosure extracts the concrete FQN when an anonymous_function
