@@ -201,3 +201,59 @@ func TestRename_MethodNameFor(t *testing.T) {
 		}
 	}
 }
+
+func TestPrepareRename_DeclarationSites(t *testing.T) {
+	modelsRoot := filepath.Join("..", "..", "testdata", "models")
+	models, err := eloquent.Walk(modelsRoot, []string{"."})
+	if err != nil {
+		t.Fatalf("eloquent.Walk: %v", err)
+	}
+	bindings := container.NewBindingIndex()
+
+	userPath := filepath.Join(modelsRoot, "User.php")
+	src, err := os.ReadFile(userPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		needle    string // cursor lands just past this prefix
+		wantToken string
+	}{
+		{
+			name:      "modern accessor method name",
+			needle:    "function email",
+			wantToken: "emailAddress",
+		},
+		{
+			name:      "fillable array entry",
+			needle:    "$fillable = ['email",
+			wantToken: "'email_address'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			idx := bytes.Index(src, []byte(tt.needle))
+			if idx < 0 {
+				t.Fatalf("needle %q not found in fixture", tt.needle)
+			}
+			offset := idx + len(tt.needle)
+
+			sym, tokenLoc := identifySymbolWithLoc(src, userPath, offset, bindings, models)
+			if sym == nil || !sym.isEloquent() {
+				t.Fatalf("expected Eloquent symbol, got %+v", sym)
+			}
+			if tokenLoc.Zero() {
+				t.Fatal("tokenLoc is zero — PrepareRename rejects declaration-site rename")
+			}
+			if tokenLoc.Path != userPath {
+				t.Errorf("tokenLoc.Path = %q, want %q", tokenLoc.Path, userPath)
+			}
+			if got := string(src[tokenLoc.StartByte:tokenLoc.EndByte]); got != tt.wantToken {
+				t.Errorf("token = %q, want %q", got, tt.wantToken)
+			}
+		})
+	}
+}

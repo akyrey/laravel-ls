@@ -153,7 +153,7 @@ func (v *symFinder) VisitClassMethod(n phpwalk.MethodInfo) {
 		for _, a := range attrs {
 			if a.MethodName == methodName && a.Source == eloquent.SourceAST {
 				v.sym = &refSymbol{modelFQN: v.encClass, propName: exposed}
-				v.tokenLoc = phpnode.FromNode("", nameNode)
+				v.tokenLoc = phpnode.FromNode(v.fc.Path, nameNode)
 				return
 			}
 		}
@@ -180,7 +180,7 @@ func (v *symFinder) VisitProperty(n phpwalk.PropertyInfo) {
 		return
 	}
 	v.sym = &refSymbol{modelFQN: v.encClass, propName: name}
-	v.tokenLoc = phpnode.FromNode("", strNode)
+	v.tokenLoc = phpnode.FromNode(v.fc.Path, strNode)
 }
 
 func (v *symFinder) VisitPropertyFetch(n phpwalk.PropertyFetchInfo) {
