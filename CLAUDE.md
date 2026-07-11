@@ -121,7 +121,6 @@ internal/
   phputil/
     fqn.go                      # FQN type, UseMap, FileContext + Resolve()
     case.go                     # Snake/Studly/Camel — mirrors Illuminate\Support\Str
-    ast.go                      # ClassFQN, LastSegment helpers
     location.go                 # Location type (parser-agnostic byte-offset struct)
 testdata/
   bindings/                     # PHP fixtures for container indexer tests

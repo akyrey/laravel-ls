@@ -57,10 +57,9 @@ func Camel(value string) string {
 	return lcfirst(Studly(value))
 }
 
-// CamelToSnake and StudlyToSnake are both just Snake — Laravel's snake()
-// handles camelCase and StudlyCase inputs identically.
+// CamelToSnake is just Snake — Laravel's snake() handles camelCase and
+// StudlyCase inputs identically.
 func CamelToSnake(value string) string { return Snake(value) }
-func StudlyToSnake(value string) string { return Snake(value) }
 
 // isAllLower mirrors PHP's ctype_lower: returns true only if every rune is
 // a lowercase Unicode letter. Underscores, digits, hyphens return false.
