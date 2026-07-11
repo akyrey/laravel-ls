@@ -236,9 +236,13 @@ always use the full `$`-prefixed string.
 
 **Known limitations:**
 - References scan covers `app/` and `routes/` only (configurable via `referenceScanDirs`).
-- Chained access resolves through one Relationship hop only (not `$a->b->c->d`).
 - Relationship detection requires `return $this->relationMethod(Class::class)`;
   multi-statement bodies are not detected.
+
+`resolveExprType` (internal/lsp/scope.go) recurses on `member_access_expression`,
+so chained access actually resolves through an arbitrary number of Relationship
+hops (`$a->b->c->d`), not just one — verified by
+`TestResolveExprType_MultiHopRelationshipChain` in internal/lsp/scope_test.go.
 
 12. **`textDocument/rename`** — Eloquent property rename across files. Reference
     sites (`$model->propName`) and method-based declaration sites (modern/legacy
