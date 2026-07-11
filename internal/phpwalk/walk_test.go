@@ -15,6 +15,7 @@ type collectingVisitor struct {
 	useItems     [][2]string // [alias, fqn]
 	classes      []phpwalk.ClassInfo
 	interfaces   []phpwalk.InterfaceInfo
+	traits       []phpwalk.TraitInfo
 	methods      []phpwalk.MethodInfo
 	properties   []phpwalk.PropertyInfo
 	propFetches  []phpwalk.PropertyFetchInfo
@@ -33,6 +34,7 @@ func (v *collectingVisitor) VisitClass(n phpwalk.ClassInfo) { v.classes = append
 func (v *collectingVisitor) VisitInterface(n phpwalk.InterfaceInfo) {
 	v.interfaces = append(v.interfaces, n)
 }
+func (v *collectingVisitor) VisitTrait(n phpwalk.TraitInfo)        { v.traits = append(v.traits, n) }
 func (v *collectingVisitor) VisitClassMethod(n phpwalk.MethodInfo) { v.methods = append(v.methods, n) }
 func (v *collectingVisitor) VisitProperty(n phpwalk.PropertyInfo) {
 	v.properties = append(v.properties, n)
@@ -329,5 +331,71 @@ class C {
 	}
 	if v.propFetches[0].PropName != "real_prop" {
 		t.Errorf("PropName = %q, want %q", v.propFetches[0].PropName, "real_prop")
+	}
+}
+
+func TestWalk_TraitDeclarationAndClassTraitUse(t *testing.T) {
+	src := []byte(`<?php
+namespace App\Models;
+trait HasSlug {
+    protected $fillable = ['slug'];
+}
+class Post extends Model {
+    use HasSlug, Concerns\HasUuid;
+    use SoftDeletes {
+        restore as publicRestore;
+    }
+}`)
+	tree, err := phpnode.ParseBytes(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer tree.Close()
+
+	v := &collectingVisitor{}
+	phpwalk.Walk("test.php", src, tree, v)
+
+	if len(v.traits) != 1 {
+		t.Fatalf("expected 1 trait, got %d", len(v.traits))
+	}
+	if v.traits[0].NameText != "HasSlug" {
+		t.Errorf("trait name = %q, want HasSlug", v.traits[0].NameText)
+	}
+
+	if len(v.classes) != 1 {
+		t.Fatalf("expected 1 class, got %d", len(v.classes))
+	}
+	got := v.classes[0].UsesTraits
+	want := []string{"HasSlug", `Concerns\HasUuid`, "SoftDeletes"}
+	if len(got) != len(want) {
+		t.Fatalf("UsesTraits = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("UsesTraits[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	// The adaptation body (restore as publicRestore) must not leak names.
+}
+
+func TestWalk_TraitUsesTrait(t *testing.T) {
+	src := []byte(`<?php
+trait Outer {
+    use Inner;
+}`)
+	tree, err := phpnode.ParseBytes(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer tree.Close()
+
+	v := &collectingVisitor{}
+	phpwalk.Walk("test.php", src, tree, v)
+
+	if len(v.traits) != 1 {
+		t.Fatalf("expected 1 trait, got %d", len(v.traits))
+	}
+	if got := v.traits[0].UsesTraits; len(got) != 1 || got[0] != "Inner" {
+		t.Errorf("trait UsesTraits = %v, want [Inner]", got)
 	}
 }

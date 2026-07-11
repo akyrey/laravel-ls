@@ -212,3 +212,46 @@ class Ctrl {
 		t.Errorf("unexpected diagnostic: %s", d.Message)
 	}
 }
+
+func TestCollectDiagnostics_NoWarningForTraitAttribute(t *testing.T) {
+	root := t.TempDir()
+	appDir := filepath.Join(root, "app", "Models")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	trait := `<?php
+namespace App\Models;
+trait HasSlug {
+    protected $fillable = ['slug'];
+}`
+	model := `<?php
+namespace App\Models;
+use Illuminate\Database\Eloquent\Model;
+class Page extends Model {
+    use HasSlug;
+}`
+	if err := os.WriteFile(filepath.Join(appDir, "HasSlug.php"), []byte(trait), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "Page.php"), []byte(model), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	models, err := eloquent.Walk(root, []string{"app"})
+	if err != nil {
+		t.Fatalf("eloquent.Walk: %v", err)
+	}
+
+	src := []byte(`<?php
+namespace App\Http\Controllers;
+use App\Models\Page;
+class Ctrl {
+    public function show(Page $page): void {
+        $page->slug;
+    }
+}`)
+	diags := collectDiagnostics(src, "/fake/Ctrl.php", models)
+	for _, d := range diags {
+		t.Errorf("unexpected diagnostic: %s", d.Message)
+	}
+}

@@ -64,10 +64,13 @@ type ModelAttribute struct {
 }
 
 // ModelCatalog is the per-model symbol table produced by the Eloquent indexer.
+// The same type also holds a trait's attributes (stored in ModelIndex.traits
+// rather than byFQN); for traits, Extends is always empty.
 type ModelCatalog struct {
-	Class   phputil.FQN
-	Path    string      // absolute path of the file that defines this class
-	Extends phputil.FQN // direct parent FQN (for inheritance-chain walking)
+	Class      phputil.FQN
+	Path       string        // absolute path of the file that defines this class
+	Extends    phputil.FQN   // direct parent FQN (for inheritance-chain walking)
+	UsesTraits []phputil.FQN // resolved FQNs of traits used in the class/trait body
 
 	// ByExposed maps the snake_case attribute name to all known entries.
 	// Multiple entries exist when the same name appears in both an accessor
@@ -78,10 +81,11 @@ type ModelCatalog struct {
 
 // ModelIndex is the full Eloquent symbol table for a project.
 type ModelIndex struct {
-	byFQN map[phputil.FQN]*ModelCatalog
-	syms  *symbolTable // retained for incremental per-file reindex
+	byFQN  map[phputil.FQN]*ModelCatalog
+	traits map[phputil.FQN]*ModelCatalog // trait FQN → its attribute catalog
+	syms   *symbolTable                  // retained for incremental per-file reindex
 
-	// merged memoizes inheritance-merged catalog views per index
+	// merged memoizes inheritance/trait-merged catalog views per index
 	// generation (indexes are immutable once published, so views never go
 	// stale within one generation). Guarded by mu because LSP handlers
 	// call Lookup concurrently.
@@ -91,30 +95,54 @@ type ModelIndex struct {
 
 // NewModelIndex returns an empty, ready-to-use index.
 func NewModelIndex() *ModelIndex {
-	return &ModelIndex{byFQN: make(map[phputil.FQN]*ModelCatalog)}
+	return &ModelIndex{
+		byFQN:  make(map[phputil.FQN]*ModelCatalog),
+		traits: make(map[phputil.FQN]*ModelCatalog),
+	}
 }
 
 // Add stores or replaces a catalog entry. Typically called once per class.
 func (idx *ModelIndex) Add(c *ModelCatalog) {
 	idx.byFQN[c.Class] = c
+	idx.invalidateMerged()
+}
+
+// AddTrait stores or replaces a trait's attribute catalog.
+func (idx *ModelIndex) AddTrait(c *ModelCatalog) {
+	idx.traits[c.Class] = c
+	idx.invalidateMerged()
+}
+
+func (idx *ModelIndex) invalidateMerged() {
 	idx.mu.Lock()
-	idx.merged = nil // catalogs changed; drop memoized inheritance views
+	idx.merged = nil // catalogs changed; drop memoized merged views
 	idx.mu.Unlock()
 }
 
 // Lookup returns the catalog for the given model FQN, or nil if not indexed.
-// When the model extends another indexed class, the returned catalog is a
-// merged view that also exposes every inherited attribute; otherwise the
-// declared catalog is returned as-is.
+// When the model extends another indexed class or uses indexed traits, the
+// returned catalog is a merged view that also exposes every inherited and
+// trait-provided attribute; otherwise the declared catalog is returned as-is.
 func (idx *ModelIndex) Lookup(fqn phputil.FQN) *ModelCatalog {
 	cat := idx.byFQN[fqn]
 	if cat == nil {
 		return nil
 	}
-	if idx.byFQN[cat.Extends] == nil {
-		return cat // no indexed ancestor — nothing to merge
+	if idx.byFQN[cat.Extends] == nil && !idx.anyIndexedTrait(cat.UsesTraits) {
+		return cat // no indexed ancestor or trait — nothing to merge
 	}
 	return idx.mergedView(fqn, cat)
+}
+
+// anyIndexedTrait reports whether at least one of the given trait FQNs has an
+// attribute catalog in the index.
+func (idx *ModelIndex) anyIndexedTrait(uses []phputil.FQN) bool {
+	for _, t := range uses {
+		if idx.traits[t] != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // LookupDeclared returns the catalog holding only the attributes declared in
@@ -126,10 +154,12 @@ func (idx *ModelIndex) LookupDeclared(fqn phputil.FQN) *ModelCatalog {
 }
 
 // mergedView builds (and memoizes) a catalog view whose ByExposed also
-// contains the attributes of every indexed ancestor. Entries are ordered
-// own-class-first so child declarations shadow parents in ranked results.
-// Source catalogs are never mutated — slices are copied before combining —
-// so catalogs shared with previous index generations stay untouched.
+// contains the attributes of every indexed ancestor and used trait. Entries
+// follow PHP's precedence order — the class itself, its traits (including
+// traits-of-traits, depth-first), then each ancestor with its traits — so
+// child declarations shadow parents in ranked results. Source catalogs are
+// never mutated — slices are copied before combining — so catalogs shared
+// with previous index generations stay untouched.
 func (idx *ModelIndex) mergedView(fqn phputil.FQN, cat *ModelCatalog) *ModelCatalog {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
@@ -138,14 +168,13 @@ func (idx *ModelIndex) mergedView(fqn phputil.FQN, cat *ModelCatalog) *ModelCata
 	}
 
 	view := &ModelCatalog{
-		Class:     cat.Class,
-		Path:      cat.Path,
-		Extends:   cat.Extends,
-		ByExposed: make(map[string][]ModelAttribute, len(cat.ByExposed)),
+		Class:      cat.Class,
+		Path:       cat.Path,
+		Extends:    cat.Extends,
+		UsesTraits: cat.UsesTraits,
+		ByExposed:  make(map[string][]ModelAttribute, len(cat.ByExposed)),
 	}
-	visited := make(map[phputil.FQN]bool)
-	for c := cat; c != nil && !visited[c.Class]; c = idx.byFQN[c.Extends] {
-		visited[c.Class] = true
+	appendAttrs := func(c *ModelCatalog) {
 		for name, attrs := range c.ByExposed {
 			existing := view.ByExposed[name]
 			combined := make([]ModelAttribute, 0, len(existing)+len(attrs))
@@ -153,6 +182,29 @@ func (idx *ModelIndex) mergedView(fqn phputil.FQN, cat *ModelCatalog) *ModelCata
 			combined = append(combined, attrs...)
 			view.ByExposed[name] = combined
 		}
+	}
+
+	visitedClasses := make(map[phputil.FQN]bool)
+	visitedTraits := make(map[phputil.FQN]bool)
+	var addTraits func(uses []phputil.FQN)
+	addTraits = func(uses []phputil.FQN) {
+		for _, tf := range uses {
+			if visitedTraits[tf] {
+				continue
+			}
+			visitedTraits[tf] = true
+			tcat := idx.traits[tf]
+			if tcat == nil {
+				continue
+			}
+			appendAttrs(tcat)
+			addTraits(tcat.UsesTraits)
+		}
+	}
+	for c := cat; c != nil && !visitedClasses[c.Class]; c = idx.byFQN[c.Extends] {
+		visitedClasses[c.Class] = true
+		appendAttrs(c)
+		addTraits(c.UsesTraits)
 	}
 
 	if idx.merged == nil {

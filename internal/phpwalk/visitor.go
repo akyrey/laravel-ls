@@ -27,6 +27,7 @@ type ParamInfo struct {
 type ClassInfo struct {
 	NameText    string           // short class name, e.g. "User"
 	ExtendsText string           // parent name as written (unresolved), e.g. "Model"
+	UsesTraits  []string         // trait names from `use X, Y;` statements, as written (unresolved)
 	Location    phputil.Location // position of the whole class node
 	Raw         *ts.Node
 	Src         []byte
@@ -38,6 +39,15 @@ type InterfaceInfo struct {
 	Location phputil.Location
 	Raw      *ts.Node
 	Src      []byte
+}
+
+// TraitInfo carries the pre-extracted fields of a trait_declaration node.
+type TraitInfo struct {
+	NameText   string
+	UsesTraits []string // traits this trait itself uses, as written (unresolved)
+	Location   phputil.Location
+	Raw        *ts.Node
+	Src        []byte
 }
 
 // MethodInfo carries the pre-extracted fields of a method_declaration node.
@@ -139,6 +149,7 @@ type Visitor interface {
 	// Top-level declarations.
 	VisitClass(n ClassInfo)
 	VisitInterface(n InterfaceInfo)
+	VisitTrait(n TraitInfo)
 
 	// Class body.
 	VisitClassMethod(n MethodInfo)
@@ -162,6 +173,7 @@ func (NullVisitor) VisitNamespace(string)                    {}
 func (NullVisitor) VisitUseItem(string, string)              {}
 func (NullVisitor) VisitClass(ClassInfo)                     {}
 func (NullVisitor) VisitInterface(InterfaceInfo)             {}
+func (NullVisitor) VisitTrait(TraitInfo)                     {}
 func (NullVisitor) VisitClassMethod(MethodInfo)              {}
 func (NullVisitor) VisitProperty(PropertyInfo)               {}
 func (NullVisitor) VisitPropertyFetch(PropertyFetchInfo)     {}

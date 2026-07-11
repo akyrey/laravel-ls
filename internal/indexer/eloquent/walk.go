@@ -29,11 +29,7 @@ func ReindexFile(path string, old *ModelIndex) (*ModelIndex, error) {
 		// File deleted or parse error — remove its entries, keep the rest.
 		newIdx := NewModelIndex()
 		newIdx.syms = newSyms
-		for fqn, cat := range old.byFQN {
-			if cat.Path != path {
-				newIdx.byFQN[fqn] = cat
-			}
-		}
+		carryOverExcept(newIdx, old, path)
 		return newIdx, nil
 	}
 	defer tree.Close()
@@ -44,15 +40,30 @@ func ReindexFile(path string, old *ModelIndex) (*ModelIndex, error) {
 
 	newIdx := NewModelIndex()
 	newIdx.syms = newSyms
-	for fqn, cat := range old.byFQN {
-		if cat.Path != path {
-			newIdx.byFQN[fqn] = cat
-		}
-	}
-	for _, catalog := range extractFileModels(path, src, tree, newSyms) {
+	carryOverExcept(newIdx, old, path)
+	models, traits := extractFileModels(path, src, tree, newSyms)
+	for _, catalog := range models {
 		newIdx.Add(catalog)
 	}
+	for _, catalog := range traits {
+		newIdx.AddTrait(catalog)
+	}
 	return newIdx, nil
+}
+
+// carryOverExcept copies every model and trait catalog from old into dst,
+// skipping the ones declared in path (which is being reindexed or removed).
+func carryOverExcept(dst, old *ModelIndex, path string) {
+	for fqn, cat := range old.byFQN {
+		if cat.Path != path {
+			dst.byFQN[fqn] = cat
+		}
+	}
+	for fqn, cat := range old.traits {
+		if cat.Path != path {
+			dst.traits[fqn] = cat
+		}
+	}
 }
 
 // DefaultScanDirs are the directories scanned when no explicit list is given.
@@ -88,8 +99,12 @@ func Walk(root string, dirs []string) (*ModelIndex, error) {
 			sv := newScanVisitor(path, syms)
 			phpwalk.Walk(path, src, tree, sv)
 
-			for _, catalog := range extractFileModels(path, src, tree, syms) {
+			models, traits := extractFileModels(path, src, tree, syms)
+			for _, catalog := range models {
 				idx.Add(catalog)
+			}
+			for _, catalog := range traits {
+				idx.AddTrait(catalog)
 			}
 			return nil
 		})

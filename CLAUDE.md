@@ -182,8 +182,11 @@ always use the full `$`-prefixed string.
 - **IDE-helper policy**: when `SourceIdeHelper` is the only source for a name,
   return nothing. `ModelAttribute.Source` is the filter; AST entries always win.
 - **Inherited attributes**: `ModelIndex.Lookup` returns an inheritance-merged
-  view (own attributes first, then every indexed ancestor's), memoized per
-  index generation under a mutex. `LookupDeclared` returns only the class's
+  view following PHP's precedence order — own attributes first, then used
+  traits (including traits-of-traits), then each indexed ancestor with its
+  traits — memoized per index generation under a mutex. Trait catalogs are
+  extracted unconditionally from every trait declaration and stored in a
+  separate map keyed by trait FQN. `LookupDeclared` returns only the class's
   own attributes — mutating callers (ide-helper merge) must use it, and
   `All()` also yields declared-only catalogs so documentSymbol /
   workspaceSymbol don't duplicate inherited names onto every subclass.

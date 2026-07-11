@@ -39,6 +39,9 @@ func walkNode(path string, src []byte, n *ts.Node, v Visitor) {
 	case "interface_declaration":
 		v.VisitInterface(buildInterfaceInfo(path, src, n))
 
+	case "trait_declaration":
+		v.VisitTrait(buildTraitInfo(path, src, n))
+
 	case "method_declaration":
 		v.VisitClassMethod(buildMethodInfo(path, src, n))
 
@@ -207,7 +210,33 @@ func buildClassInfo(path string, src []byte, n *ts.Node) ClassInfo {
 			break
 		}
 	}
+	info.UsesTraits = collectUseTraits(src, n.ChildByFieldName("body"))
 	return info
+}
+
+// collectUseTraits returns the trait names referenced by `use X, Y;`
+// statements directly inside a class/trait body, as written (unresolved).
+// Names inside adaptation blocks (`use T { m as n; }`) are not collected —
+// they are children of the use_list node, not of use_declaration itself.
+func collectUseTraits(src []byte, body *ts.Node) []string {
+	if body == nil {
+		return nil
+	}
+	var out []string
+	for i := uint(0); i < body.ChildCount(); i++ {
+		child := body.Child(i)
+		if child.Kind() != "use_declaration" {
+			continue
+		}
+		for j := uint(0); j < child.ChildCount(); j++ {
+			c := child.Child(j)
+			switch c.Kind() {
+			case "name", "qualified_name":
+				out = append(out, phpnode.NodeText(c, src))
+			}
+		}
+	}
+	return out
 }
 
 func baseClauseText(src []byte, clause *ts.Node) string {
@@ -228,6 +257,15 @@ func buildInterfaceInfo(path string, src []byte, n *ts.Node) InterfaceInfo {
 	if nameNode := n.ChildByFieldName("name"); nameNode != nil {
 		info.NameText = phpnode.NodeText(nameNode, src)
 	}
+	return info
+}
+
+func buildTraitInfo(path string, src []byte, n *ts.Node) TraitInfo {
+	info := TraitInfo{Raw: n, Src: src, Location: phpnode.FromNode(path, n)}
+	if nameNode := n.ChildByFieldName("name"); nameNode != nil {
+		info.NameText = phpnode.NodeText(nameNode, src)
+	}
+	info.UsesTraits = collectUseTraits(src, n.ChildByFieldName("body"))
 	return info
 }
 
