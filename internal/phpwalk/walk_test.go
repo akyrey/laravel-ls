@@ -223,6 +223,50 @@ func TestWalk_CollectsAllEvents(t *testing.T) {
 	}
 }
 
+func TestWalk_UnionReturnType(t *testing.T) {
+	src := []byte(`<?php
+class Foo {
+    public function bar(): int|string { return 1; }
+}
+`)
+	tree, err := phpnode.ParseBytes(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer tree.Close()
+
+	v := &collectingVisitor{}
+	phpwalk.Walk("", src, tree, v)
+
+	for _, m := range v.methods {
+		if m.Name == "bar" && m.ReturnTypeText != "" {
+			t.Errorf("bar: want empty return type for an unresolvable union type, got %q", m.ReturnTypeText)
+		}
+	}
+}
+
+func TestWalk_IntersectionReturnType(t *testing.T) {
+	src := []byte(`<?php
+class Foo {
+    public function bar(): Countable&Iterator { return $this; }
+}
+`)
+	tree, err := phpnode.ParseBytes(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer tree.Close()
+
+	v := &collectingVisitor{}
+	phpwalk.Walk("", src, tree, v)
+
+	for _, m := range v.methods {
+		if m.Name == "bar" && m.ReturnTypeText != "" {
+			t.Errorf("bar: want empty return type for an unresolvable intersection type, got %q", m.ReturnTypeText)
+		}
+	}
+}
+
 func TestWalk_NullableReturnType(t *testing.T) {
 	src := []byte(`<?php
 class Foo {

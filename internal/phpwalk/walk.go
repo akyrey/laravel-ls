@@ -275,6 +275,11 @@ func unwrapTypeName(src []byte, n *ts.Node) string {
 		return qualifiedNameText(n, src)
 	case "name":
 		return phpnode.NodeText(n, src)
+	case "union_type", "intersection_type":
+		// e.g. `int|string` or `Countable&Iterator` — no single resolvable
+		// type, so callers must treat this as unknown rather than resolve
+		// the raw "A|B" text as if it were one class name.
+		return ""
 	}
 	return phpnode.NodeText(n, src)
 }
