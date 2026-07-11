@@ -270,11 +270,17 @@ byte), matching LSP's exclusive range end. `toLSPRange` uses it directly.
     entries replaced. The server swaps the new indexes atomically under `s.mu`.
     Falls back to full reindex when the symbol table is absent (first run).
 
-16. **`textDocument/codeAction`** — four quick-fixes offered per `unknown property`
-    diagnostic: "Add to `$fillable`", "Add to `$casts`" (`'prop' => 'string'`),
-    "Add to `$appends`", "Add to `$hidden`". A single `arrayPropVisitor` AST
-    pass finds all four arrays; each action inserts at the appropriate point.
-    Requires `cat.Path` set on `ModelCatalog` (populated by Walk).
+16. **`textDocument/codeAction`** — up to five quick-fixes offered per `unknown
+    property` diagnostic: "Add to `$fillable`", "Add to `$casts`"
+    (`'prop' => 'string'`), "Add to `$appends`", "Add to `$hidden`", and
+    "Generate accessor for '`prop`'". A single `arrayPropVisitor` AST pass
+    finds all four arrays; each action inserts at the appropriate point.
+    The accessor quick-fix appends a modern-accessor method stub
+    (`public function prop(): Attribute { return Attribute::make(...); }`)
+    to the end of the class body, reusing the file's existing `use
+    Illuminate\Database\Eloquent\Casts\Attribute` alias when present or
+    falling back to the fully-qualified name so no new `use` statement is
+    needed. Requires `cat.Path` set on `ModelCatalog` (populated by Walk).
 
 17. **`textDocument/documentSymbol`** — returns all exposed Eloquent attributes
     for model files as `DocumentSymbol` entries. Method-based attributes appear

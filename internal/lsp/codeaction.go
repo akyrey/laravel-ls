@@ -16,6 +16,10 @@ import (
 // unknownPropRe matches the diagnostic message produced by diagVisitor.
 var unknownPropRe = regexp.MustCompile(`^unknown property '([^']+)' on (.+)$`)
 
+// eloquentAttributeFQN mirrors eloquent's unexported eloquentAttributeTypeFQN
+// — the return type Laravel 9+ modern accessors declare.
+const eloquentAttributeFQN phputil.FQN = "Illuminate\\Database\\Eloquent\\Casts\\Attribute"
+
 // arrayQuickFix describes one "add to $array" quick-fix offered per diagnostic.
 type arrayQuickFix struct {
 	phpProp string
@@ -127,6 +131,15 @@ func (s *Server) CodeAction(_ *glsp.Context, p *protocol.CodeActionParams) (any,
 				Edit:        edit,
 			})
 		}
+
+		if edit := buildCreateAccessorEdit(cat.Path, src, propName); edit != nil {
+			actions = append(actions, protocol.CodeAction{
+				Title:       fmt.Sprintf("Generate accessor for '%s'", propName),
+				Kind:        &kind,
+				Diagnostics: []protocol.Diagnostic{diag},
+				Edit:        edit,
+			})
+		}
 	}
 
 	if len(actions) == 0 {
@@ -157,6 +170,76 @@ func buildAddToFillableEdit(modelPath string, src []byte, propName string) *prot
 			uri: {{Range: protocol.Range{Start: pos, End: pos}, NewText: newText}},
 		},
 	}
+}
+
+// buildCreateAccessorEdit builds a WorkspaceEdit that appends a Laravel 9+
+// modern-accessor method stub for propName to the end of the class body in
+// modelPath. Returns nil when no class declaration is found in src.
+func buildCreateAccessorEdit(modelPath string, src []byte, propName string) *protocol.WorkspaceEdit {
+	insertByte, attributeRef, ok := findAccessorInsertPoint(modelPath, src)
+	if !ok {
+		return nil
+	}
+
+	line, col := byteOffsetToLineCol(src, insertByte)
+	pos := protocol.Position{Line: uint32(line), Character: uint32(col)}
+	newText := fmt.Sprintf(
+		"\n    public function %s(): %s\n    {\n        return %s::make(\n            get: fn ($value) => $value,\n        );\n    }\n",
+		phputil.Camel(propName), attributeRef, attributeRef,
+	)
+	uri := PathToURI(modelPath)
+	return &protocol.WorkspaceEdit{
+		Changes: map[protocol.DocumentUri][]protocol.TextEdit{
+			uri: {{Range: protocol.Range{Start: pos, End: pos}, NewText: newText}},
+		},
+	}
+}
+
+// findAccessorInsertPoint parses src and returns the byte offset just before
+// the closing brace of the first class body, plus the reference to use for
+// Illuminate\Database\Eloquent\Casts\Attribute in generated code: the
+// existing use-alias if the class already imports it, or a fully-qualified
+// name otherwise (so the generated stub never needs a new use statement).
+func findAccessorInsertPoint(path string, src []byte) (insertByte int, attributeRef string, ok bool) {
+	tree, err := phpnode.ParseBytes(src)
+	if err != nil {
+		return 0, "", false
+	}
+	defer tree.Close()
+
+	v := &accessorInsertVisitor{attributeRef: "\\" + string(eloquentAttributeFQN)}
+	phpwalk.Walk(path, src, tree, v)
+	if !v.found {
+		return 0, "", false
+	}
+	return v.insertByte, v.attributeRef, true
+}
+
+// accessorInsertVisitor locates the first class body's end and, if the file
+// already imports the Attribute cast class, the alias it was imported under.
+type accessorInsertVisitor struct {
+	phpwalk.NullVisitor
+	attributeRef string
+	insertByte   int
+	found        bool
+}
+
+func (v *accessorInsertVisitor) VisitUseItem(alias, fqn string) {
+	if phputil.FQN(fqn) == eloquentAttributeFQN {
+		v.attributeRef = alias
+	}
+}
+
+func (v *accessorInsertVisitor) VisitClass(n phpwalk.ClassInfo) {
+	if v.found {
+		return
+	}
+	bodyNode := n.Raw.ChildByFieldName("body")
+	if bodyNode == nil {
+		return
+	}
+	v.insertByte = int(bodyNode.EndByte()) - 1
+	v.found = true
 }
 
 // byteOffsetToLineCol converts a byte offset to 0-based (line, utf16-col).
