@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"regexp"
 
-	ts "github.com/tree-sitter/go-tree-sitter"
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
+	ts "github.com/tree-sitter/go-tree-sitter"
 
 	"github.com/akyrey/laravel-lsp/internal/phpnode"
 	"github.com/akyrey/laravel-lsp/internal/phputil"

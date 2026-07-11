@@ -11,28 +11,32 @@ import (
 type collectingVisitor struct {
 	phpwalk.NullVisitor
 
-	namespaces []string
-	useItems   [][2]string // [alias, fqn]
-	classes    []phpwalk.ClassInfo
-	interfaces []phpwalk.InterfaceInfo
-	methods    []phpwalk.MethodInfo
-	properties []phpwalk.PropertyInfo
-	propFetches []phpwalk.PropertyFetchInfo
+	namespaces   []string
+	useItems     [][2]string // [alias, fqn]
+	classes      []phpwalk.ClassInfo
+	interfaces   []phpwalk.InterfaceInfo
+	methods      []phpwalk.MethodInfo
+	properties   []phpwalk.PropertyInfo
+	propFetches  []phpwalk.PropertyFetchInfo
 	constFetches []phpwalk.ClassConstFetchInfo
-	newExprs   []phpwalk.NewExprInfo
-	staticCalls []phpwalk.StaticCallInfo
-	methodCalls []phpwalk.MethodCallInfo
-	assigns    []phpwalk.AssignInfo
+	newExprs     []phpwalk.NewExprInfo
+	staticCalls  []phpwalk.StaticCallInfo
+	methodCalls  []phpwalk.MethodCallInfo
+	assigns      []phpwalk.AssignInfo
 }
 
 func (v *collectingVisitor) VisitNamespace(ns string) { v.namespaces = append(v.namespaces, ns) }
 func (v *collectingVisitor) VisitUseItem(alias, fqn string) {
 	v.useItems = append(v.useItems, [2]string{alias, fqn})
 }
-func (v *collectingVisitor) VisitClass(n phpwalk.ClassInfo)       { v.classes = append(v.classes, n) }
-func (v *collectingVisitor) VisitInterface(n phpwalk.InterfaceInfo) { v.interfaces = append(v.interfaces, n) }
+func (v *collectingVisitor) VisitClass(n phpwalk.ClassInfo) { v.classes = append(v.classes, n) }
+func (v *collectingVisitor) VisitInterface(n phpwalk.InterfaceInfo) {
+	v.interfaces = append(v.interfaces, n)
+}
 func (v *collectingVisitor) VisitClassMethod(n phpwalk.MethodInfo) { v.methods = append(v.methods, n) }
-func (v *collectingVisitor) VisitProperty(n phpwalk.PropertyInfo) { v.properties = append(v.properties, n) }
+func (v *collectingVisitor) VisitProperty(n phpwalk.PropertyInfo) {
+	v.properties = append(v.properties, n)
+}
 func (v *collectingVisitor) VisitPropertyFetch(n phpwalk.PropertyFetchInfo) {
 	v.propFetches = append(v.propFetches, n)
 }

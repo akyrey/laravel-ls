@@ -42,8 +42,8 @@ type InterfaceInfo struct {
 
 // MethodInfo carries the pre-extracted fields of a method_declaration node.
 type MethodInfo struct {
-	Name           string           // method name, e.g. "emailAddress"
-	ReturnTypeText string           // unwrapped return type text, e.g. "Attribute"; "" if none
+	Name           string // method name, e.g. "emailAddress"
+	ReturnTypeText string // unwrapped return type text, e.g. "Attribute"; "" if none
 	Params         []ParamInfo
 	Location       phputil.Location // position of the whole method node
 	StartByte      int              // same as Location.StartByte; duplicated for cursor checks
@@ -158,16 +158,16 @@ type Visitor interface {
 // Embed it in your visitor struct and override only what you need.
 type NullVisitor struct{}
 
-func (NullVisitor) VisitNamespace(string)           {}
-func (NullVisitor) VisitUseItem(string, string)     {}
-func (NullVisitor) VisitClass(ClassInfo)             {}
-func (NullVisitor) VisitInterface(InterfaceInfo)     {}
-func (NullVisitor) VisitClassMethod(MethodInfo)      {}
-func (NullVisitor) VisitProperty(PropertyInfo)       {}
-func (NullVisitor) VisitPropertyFetch(PropertyFetchInfo) {}
+func (NullVisitor) VisitNamespace(string)                    {}
+func (NullVisitor) VisitUseItem(string, string)              {}
+func (NullVisitor) VisitClass(ClassInfo)                     {}
+func (NullVisitor) VisitInterface(InterfaceInfo)             {}
+func (NullVisitor) VisitClassMethod(MethodInfo)              {}
+func (NullVisitor) VisitProperty(PropertyInfo)               {}
+func (NullVisitor) VisitPropertyFetch(PropertyFetchInfo)     {}
 func (NullVisitor) VisitClassConstFetch(ClassConstFetchInfo) {}
-func (NullVisitor) VisitNew(NewExprInfo)             {}
-func (NullVisitor) VisitStaticCall(StaticCallInfo)   {}
-func (NullVisitor) VisitMethodCall(MethodCallInfo)   {}
-func (NullVisitor) VisitInstanceOf(InstanceOfInfo)   {}
-func (NullVisitor) VisitAssign(AssignInfo)           {}
+func (NullVisitor) VisitNew(NewExprInfo)                     {}
+func (NullVisitor) VisitStaticCall(StaticCallInfo)           {}
+func (NullVisitor) VisitMethodCall(MethodCallInfo)           {}
+func (NullVisitor) VisitInstanceOf(InstanceOfInfo)           {}
+func (NullVisitor) VisitAssign(AssignInfo)                   {}

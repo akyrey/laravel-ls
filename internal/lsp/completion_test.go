@@ -140,4 +140,3 @@ func TestEloquentCompletions_NoMatch(t *testing.T) {
 		t.Errorf("expected no items for unknown var, got %d", len(items))
 	}
 }
-

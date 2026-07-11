@@ -185,9 +185,9 @@ func TestPrepareRename_EloquentReturnsRange(t *testing.T) {
 
 func TestRename_MethodNameFor(t *testing.T) {
 	cases := []struct {
-		kind    eloquent.AttributeKind
-		input   string
-		want    string
+		kind  eloquent.AttributeKind
+		input string
+		want  string
 	}{
 		{eloquent.ModernAccessor, "contact_email", "contactEmail"},
 		{eloquent.LegacyAccessor, "first_name", "getFirstNameAttribute"},

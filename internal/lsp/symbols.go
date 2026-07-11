@@ -114,4 +114,3 @@ func (s *Server) DocumentSymbol(_ *glsp.Context, p *protocol.DocumentSymbolParam
 	}
 	return out, nil
 }
-

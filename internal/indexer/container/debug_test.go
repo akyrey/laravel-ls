@@ -58,9 +58,9 @@ type countingVisitor struct {
 	methods    int
 }
 
-func (v *countingVisitor) VisitClass(phpwalk.ClassInfo)          { v.classes++ }
-func (v *countingVisitor) VisitInterface(phpwalk.InterfaceInfo)  { v.interfaces++ }
-func (v *countingVisitor) VisitUseItem(string, string)           { v.uses++ }
+func (v *countingVisitor) VisitClass(phpwalk.ClassInfo)           { v.classes++ }
+func (v *countingVisitor) VisitInterface(phpwalk.InterfaceInfo)   { v.interfaces++ }
+func (v *countingVisitor) VisitUseItem(string, string)            { v.uses++ }
 func (v *countingVisitor) VisitMethodCall(phpwalk.MethodCallInfo) { v.methods++ }
 
 func TestDebugTraversal(t *testing.T) {

@@ -18,8 +18,8 @@ var bindingMethods = map[string]string{
 
 // bindingAttributes maps fully-qualified PHP 8 attribute names to Lifetime.
 var bindingAttributes = map[phputil.FQN]string{
-	"Illuminate\\Container\\Attributes\\Bind":      "transient",
-	"Illuminate\\Container\\Attributes\\Singleton": "singleton",
+	"Illuminate\\Container\\Attributes\\Bind":       "transient",
+	"Illuminate\\Container\\Attributes\\Singleton":  "singleton",
 	"Illuminate\\Container\\Attributes\\ScopedBind": "scoped",
 }
 
