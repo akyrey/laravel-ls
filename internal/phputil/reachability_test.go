@@ -38,3 +38,22 @@ func TestResolveReachable_NoMatches(t *testing.T) {
 		t.Errorf("expected empty result, got %v", got)
 	}
 }
+
+func TestResolveReachable_CyclicExtendsChain(t *testing.T) {
+	// Broken-but-parseable code: A extends B, B extends A. Must terminate
+	// (returning not-reachable) instead of recursing forever.
+	extends := map[phputil.FQN]phputil.FQN{"A": "B", "B": "A", "C": "Base"}
+	got := phputil.ResolveReachable([]phputil.FQN{"A", "B", "C"}, func(f phputil.FQN) phputil.FQN {
+		return extends[f]
+	}, "Base")
+
+	if _, ok := got["A"]; ok {
+		t.Error("A is in a cycle and must not be reachable")
+	}
+	if _, ok := got["B"]; ok {
+		t.Error("B is in a cycle and must not be reachable")
+	}
+	if _, ok := got["C"]; !ok {
+		t.Error("C extends Base directly and must be reachable")
+	}
+}

@@ -24,6 +24,10 @@ func ResolveReachable(fqns []FQN, extendsOf func(FQN) FQN, baseFQN FQN) map[FQN]
 			memo[fqn] = false
 			return false
 		}
+		// Mark before recursing so a cyclic extends chain (A extends B,
+		// B extends A) terminates as not-reachable instead of overflowing
+		// the stack.
+		memo[fqn] = false
 		result := check(parent)
 		memo[fqn] = result
 		return result
