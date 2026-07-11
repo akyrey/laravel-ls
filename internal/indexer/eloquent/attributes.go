@@ -28,8 +28,8 @@ var relationBuilderMethods = map[string]bool{
 }
 
 var (
-	legacyGetterRe = regexp.MustCompile(`^get([A-Z].+)Attribute$`)
-	legacySetterRe = regexp.MustCompile(`^set([A-Z].+)Attribute$`)
+	legacyGetterRe = regexp.MustCompile(`^get([A-Z].*)Attribute$`)
+	legacySetterRe = regexp.MustCompile(`^set([A-Z].*)Attribute$`)
 )
 
 // extractMethods inspects every method_declaration in classNode and returns

@@ -40,6 +40,14 @@ class User extends Model
     }
 
     /**
+     * Single-character legacy accessor. Exposed attribute name: "x".
+     */
+    public function getXAttribute(string $value): string
+    {
+        return $value;
+    }
+
+    /**
      * Get or set the calculated price.
      *
      * @return Attribute<string|null, string|null>

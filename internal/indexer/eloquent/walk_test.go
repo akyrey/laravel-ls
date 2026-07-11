@@ -303,6 +303,52 @@ func TestLegacyMutator_MethodNameStored(t *testing.T) {
 	t.Error("LegacyMutator for title not found")
 }
 
+func TestLegacyAccessor_SingleCharacterProperty(t *testing.T) {
+	t.Parallel()
+	idx := walkFixtures(t)
+
+	cat := idx.Lookup("App\\Models\\User")
+	if cat == nil {
+		t.Fatal("User model not indexed")
+	}
+
+	// getXAttribute → ExposedName "x". A single-character captured name must
+	// still match the legacy accessor pattern.
+	entries := cat.ByExposed["x"]
+	found := false
+	for _, a := range entries {
+		if a.Kind == eloquent.LegacyAccessor && a.MethodName == "getXAttribute" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("LegacyAccessor for single-character property 'x' not found; got %+v", entries)
+	}
+}
+
+func TestLegacyMutator_SingleCharacterProperty(t *testing.T) {
+	t.Parallel()
+	idx := walkFixtures(t)
+
+	cat := idx.Lookup("App\\Models\\Post")
+	if cat == nil {
+		t.Fatal("Post model not indexed")
+	}
+
+	// setYAttribute → ExposedName "y". A single-character captured name must
+	// still match the legacy mutator pattern.
+	entries := cat.ByExposed["y"]
+	found := false
+	for _, a := range entries {
+		if a.Kind == eloquent.LegacyMutator && a.MethodName == "setYAttribute" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("LegacyMutator for single-character property 'y' not found; got %+v", entries)
+	}
+}
+
 func TestNonModelNotIndexed(t *testing.T) {
 	t.Parallel()
 	idx := walkFixtures(t)

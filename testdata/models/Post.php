@@ -15,6 +15,14 @@ class Post extends Model
         $this->attributes['title'] = strtolower($value);
     }
 
+    /**
+     * Single-character legacy mutator. Exposed attribute name: "y".
+     */
+    public function setYAttribute(string $value): void
+    {
+        $this->attributes['y'] = $value;
+    }
+
     // Untyped relationship — no return-type annotation.
     public function author()
     {
