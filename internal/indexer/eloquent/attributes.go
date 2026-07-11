@@ -59,6 +59,13 @@ func extractMethods(path string, classNode *ts.Node, src []byte, fc *phputil.Fil
 
 		loc := phpnode.FromNode(path, m)
 
+		// Laravel 11+ casts() method: `protected function casts(): array`.
+		// Its return array is equivalent to the $casts property.
+		if methodName == "casts" {
+			out = append(out, extractCastsMethod(path, m, src)...)
+			continue
+		}
+
 		// Modern accessor or typed relationship: inspect return type.
 		if rtNode := m.ChildByFieldName("return_type"); rtNode != nil {
 			rtText := phpwalk.UnwrapTypeName(rtNode, src)
@@ -125,6 +132,46 @@ func extractMethods(path string, classNode *ts.Node, src []byte, fc *phputil.Fil
 				Location:    loc,
 			})
 			continue
+		}
+	}
+	return out
+}
+
+// extractCastsMethod extracts CastArray attributes from a Laravel 11+
+// `casts()` method whose body returns an array literal. Each entry's
+// location is its key string node, so jump-to-definition lands on the key.
+func extractCastsMethod(path string, methodNode *ts.Node, src []byte) []ModelAttribute {
+	bodyNode := methodNode.ChildByFieldName("body")
+	if bodyNode == nil {
+		return nil
+	}
+	var out []ModelAttribute
+	for i := uint(0); i < bodyNode.ChildCount(); i++ {
+		stmt := bodyNode.Child(i)
+		if stmt.Kind() != "return_statement" {
+			continue
+		}
+		for j := uint(0); j < stmt.ChildCount(); j++ {
+			arr := stmt.Child(j)
+			if arr.Kind() != "array_creation_expression" {
+				continue
+			}
+			for k := uint(0); k < arr.ChildCount(); k++ {
+				item := arr.Child(k)
+				if item.Kind() != "array_element_initializer" {
+					continue
+				}
+				name, strNode := arrayItemNameAndNode(CastArray, item, src)
+				if name == "" {
+					continue
+				}
+				out = append(out, ModelAttribute{
+					ExposedName: name,
+					Kind:        CastArray,
+					Source:      SourceAST,
+					Location:    phpnode.FromNode(path, strNode),
+				})
+			}
 		}
 	}
 	return out

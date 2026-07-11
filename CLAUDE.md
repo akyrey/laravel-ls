@@ -93,7 +93,7 @@ internal/
       catalog.go                # ModelCatalog + ModelIndex + attribute types
       symbols.go                # classDecl + symbolTable (phase 1 output)
       scan.go                   # phase 1 traversal: build symbolTable
-      attributes.go             # modern/legacy accessors, mutators, relationships
+      attributes.go             # modern/legacy accessors, mutators, relationships, casts()
       arrays.go                 # $fillable / $casts / $appends / $hidden
       extract.go                # per-file catalog extraction
       walk.go                   # Walk() + ReindexFile()

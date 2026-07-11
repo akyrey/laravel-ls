@@ -167,3 +167,44 @@ class Scratch {
 		t.Errorf("expected LegacyMutator exposed as 'name', got %+v (ok=%v)", setter, ok)
 	}
 }
+
+func TestExtractMethods_CastsMethodLaravel11(t *testing.T) {
+	src := []byte(`<?php
+namespace App\Models;
+use Illuminate\Database\Eloquent\Model;
+use App\Enums\UserStatus;
+class User extends Model {
+    protected function casts(): array
+    {
+        return [
+            'email_verified_at' => 'datetime',
+            'status' => UserStatus::class,
+        ];
+    }
+}`)
+	raw, fc, tree := firstClassNode(t, src)
+	defer tree.Close()
+
+	attrs := extractMethods("/fake/User.php", raw, src, fc)
+
+	found := map[string]ModelAttribute{}
+	for _, a := range attrs {
+		found[a.ExposedName] = a
+	}
+	for _, name := range []string{"email_verified_at", "status"} {
+		a, ok := found[name]
+		if !ok {
+			t.Errorf("casts() key %q not extracted; got %v", name, attrs)
+			continue
+		}
+		if a.Kind != CastArray {
+			t.Errorf("%q kind = %v, want CastArray", name, a.Kind)
+		}
+		if a.Location.Zero() {
+			t.Errorf("%q has zero location", name)
+		}
+	}
+	if _, ok := found["casts"]; ok {
+		t.Error("the casts() method itself must not be exposed as an attribute")
+	}
+}
