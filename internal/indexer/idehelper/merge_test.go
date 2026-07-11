@@ -147,3 +147,29 @@ func TestMerge_AbsentFileIsNoOp(t *testing.T) {
 		t.Errorf("expected nil for missing file, got %v", err)
 	}
 }
+
+func TestMerge_IsIdempotent(t *testing.T) {
+	idx := eloquent.NewModelIndex()
+	if err := idehelper.Merge(fixtureFile, idx); err != nil {
+		t.Fatalf("first Merge: %v", err)
+	}
+	if err := idehelper.Merge(fixtureFile, idx); err != nil {
+		t.Fatalf("second Merge: %v", err)
+	}
+
+	cat := idx.Lookup("App\\Models\\User")
+	if cat == nil {
+		t.Fatal("App\\Models\\User not in index after merge")
+	}
+	for _, name := range []string{"id", "roles_count", "active"} {
+		count := 0
+		for _, a := range cat.ByExposed[name] {
+			if a.Source == eloquent.SourceIdeHelper {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Errorf("%q: %d ide-helper entries after double merge, want 1", name, count)
+		}
+	}
+}

@@ -105,7 +105,7 @@ func (v *mergeVisitor) VisitClass(n phpwalk.ClassInfo) {
 	}
 
 	for _, pe := range props {
-		if hasSourceAST(cat, pe.name) {
+		if hasSourceAST(cat, pe.name) || hasIdeHelperEntry(cat, pe.name, eloquent.IdeHelperProperty) {
 			continue
 		}
 		attr := eloquent.ModelAttribute{
@@ -123,7 +123,7 @@ func (v *mergeVisitor) VisitClass(n phpwalk.ClassInfo) {
 	}
 
 	for _, name := range methods {
-		if hasSourceAST(cat, name) {
+		if hasSourceAST(cat, name) || hasIdeHelperEntry(cat, name, eloquent.IdeHelperMethod) {
 			continue
 		}
 		cat.ByExposed[name] = append(cat.ByExposed[name], eloquent.ModelAttribute{
@@ -154,6 +154,19 @@ func resolveClassType(typeStr string, fc *phputil.FileContext) phputil.FQN {
 func hasSourceAST(cat *eloquent.ModelCatalog, name string) bool {
 	for _, a := range cat.ByExposed[name] {
 		if a.Source == eloquent.SourceAST {
+			return true
+		}
+	}
+	return false
+}
+
+// hasIdeHelperEntry reports whether cat already has a SourceIdeHelper entry of
+// the given kind for name. This makes Merge idempotent, so the server can
+// re-apply it after an incremental reindex without duplicating entries on
+// catalogs that were carried over unchanged.
+func hasIdeHelperEntry(cat *eloquent.ModelCatalog, name string, kind eloquent.AttributeKind) bool {
+	for _, a := range cat.ByExposed[name] {
+		if a.Source == eloquent.SourceIdeHelper && a.Kind == kind {
 			return true
 		}
 	}

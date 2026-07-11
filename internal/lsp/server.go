@@ -433,6 +433,16 @@ func (s *Server) reindexFiles(root string, paths []string) {
 		}
 	}
 
+	// Re-apply ide-helper entries for the freshly extracted catalogs before
+	// publishing. Merge is idempotent, so carried-over catalogs (which still
+	// hold their entries from the previous merge) are left untouched.
+	if newModels != models {
+		ideHelperPath := filepath.Join(root, "_ide_helper_models.php")
+		if err := idehelper.Merge(ideHelperPath, newModels); err != nil {
+			s.log.Errorf("laravel-lsp: idehelper merge: %v", err)
+		}
+	}
+
 	if newBindings != bindings || newModels != models {
 		s.mu.Lock()
 		s.bindings = newBindings
