@@ -74,3 +74,46 @@ func TestUTF16ColFromFileOffset_FirstLine(t *testing.T) {
 		t.Errorf("want 11, got %d", col)
 	}
 }
+
+func TestURIToPath_PercentEncoded(t *testing.T) {
+	tests := []struct {
+		uri  string
+		want string
+	}{
+		{"file:///Users/me/My%20Project/app/User.php", "/Users/me/My Project/app/User.php"},
+		{"file:///Users/me/caf%C3%A9/User.php", "/Users/me/café/User.php"},
+		{"file:///plain/path/User.php", "/plain/path/User.php"},
+	}
+	for _, tt := range tests {
+		if got := URIToPath(protocol.DocumentUri(tt.uri)); got != tt.want {
+			t.Errorf("URIToPath(%q) = %q, want %q", tt.uri, got, tt.want)
+		}
+	}
+}
+
+func TestPathToURI_EncodesSpecialChars(t *testing.T) {
+	got := PathToURI("/Users/me/My Project/app/User.php")
+	want := protocol.DocumentUri("file:///Users/me/My%20Project/app/User.php")
+	if got != want {
+		t.Errorf("PathToURI = %q, want %q", got, want)
+	}
+	// Round-trip must be lossless.
+	if back := URIToPath(got); back != "/Users/me/My Project/app/User.php" {
+		t.Errorf("round-trip = %q", back)
+	}
+}
+
+func TestDocumentStore_NormalizesURIKeys(t *testing.T) {
+	docs := newDocumentStore()
+	// The client opens a file using a percent-encoded URI...
+	docs.Set(protocol.DocumentUri("file:///tmp/My%20Project/User.php"), []byte("buffer content"))
+
+	// ...and internal code asks for the same file via PathToURI(path).
+	src, err := docs.Read(PathToURI("/tmp/My Project/User.php"))
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if string(src) != "buffer content" {
+		t.Errorf("Read returned %q, want the open buffer", src)
+	}
+}

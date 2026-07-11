@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"bytes"
+	"net/url"
 	"os"
 	"unicode/utf8"
 
@@ -13,18 +14,31 @@ import (
 // boolPtr returns a pointer to b. Used when a protocol field requires *bool.
 func boolPtr(b bool) *bool { return &b }
 
-// URIToPath converts a file:// URI to an absolute filesystem path.
+// URIToPath converts a file:// URI to an absolute filesystem path,
+// percent-decoding any escaped characters (spaces, non-ASCII, ...).
 func URIToPath(uri protocol.DocumentUri) string {
 	s := string(uri)
+	if u, err := url.Parse(s); err == nil && u.Scheme == "file" && (u.Host == "" || u.Host == "localhost") {
+		return u.Path // already percent-decoded
+	}
+	// Not a parseable absolute file URI (e.g. built from a relative path in
+	// tests) — fall back to plain prefix stripping.
 	if len(s) >= 7 && s[:7] == "file://" {
 		return s[7:]
 	}
 	return s
 }
 
-// PathToURI converts an absolute filesystem path to a file:// URI.
+// PathToURI converts a filesystem path to a file:// URI, percent-encoding
+// characters that are not valid in a URI path.
 func PathToURI(path string) protocol.DocumentUri {
-	return protocol.DocumentUri("file://" + path)
+	if len(path) == 0 || path[0] != '/' {
+		// Relative path (tests, unusual clients): url.URL would misparse the
+		// first segment as a host on round-trip, so keep the naive form.
+		return protocol.DocumentUri("file://" + path)
+	}
+	u := url.URL{Scheme: "file", Path: path}
+	return protocol.DocumentUri(u.String())
 }
 
 // toLSPLocation converts a phputil.Location to an LSP protocol.Location.
