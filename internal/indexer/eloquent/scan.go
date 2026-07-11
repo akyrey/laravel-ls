@@ -1,11 +1,7 @@
 package eloquent
 
 import (
-	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
-	"strings"
+	ts "github.com/tree-sitter/go-tree-sitter"
 
 	"github.com/akyrey/laravel-lsp/internal/phpnode"
 	"github.com/akyrey/laravel-lsp/internal/phputil"
@@ -52,28 +48,12 @@ func (v *scanVisitor) VisitClass(n phpwalk.ClassInfo) {
 
 func buildSymbolTable(root string, dirs []string) (*symbolTable, error) {
 	syms := newSymbolTable()
-	for _, dir := range dirs {
-		scanDir := filepath.Join(root, dir)
-		err := filepath.WalkDir(scanDir, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return nil
-			}
-			if d.IsDir() || !strings.HasSuffix(path, ".php") {
-				return nil
-			}
-			src, tree, parseErr := phpnode.ParseFile(path)
-			if parseErr != nil {
-				fmt.Fprintf(os.Stderr, "laravel-lsp: skipping %s: %v\n", path, parseErr)
-				return nil
-			}
-			defer tree.Close()
-			sv := newScanVisitor(path, syms)
-			phpwalk.Walk(path, src, tree, sv)
-			return nil
-		})
-		if err != nil {
-			return nil, err
-		}
+	err := phpnode.WalkPHPFiles(root, dirs, func(path string, src []byte, tree *ts.Tree) {
+		sv := newScanVisitor(path, syms)
+		phpwalk.Walk(path, src, tree, sv)
+	})
+	if err != nil {
+		return nil, err
 	}
 	syms.resolveModels()
 	return syms, nil

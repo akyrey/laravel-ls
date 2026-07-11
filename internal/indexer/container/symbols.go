@@ -79,31 +79,14 @@ func (st *symbolTable) isServiceProvider(fqn phputil.FQN) bool {
 // that eventually reaches serviceProviderFQN. Called once after phase 1
 // has populated st.classes.
 func (st *symbolTable) resolveServiceProviders() {
-	// memo avoids re-walking the same chain twice.
-	memo := make(map[phputil.FQN]bool)
-
-	var check func(fqn phputil.FQN) bool
-	check = func(fqn phputil.FQN) bool {
-		if v, seen := memo[fqn]; seen {
-			return v
-		}
-		if fqn == serviceProviderFQN {
-			memo[fqn] = true
-			return true
-		}
-		decl, ok := st.classes[fqn]
-		if !ok || decl.Extends == "" {
-			memo[fqn] = false
-			return false
-		}
-		result := check(decl.Extends)
-		memo[fqn] = result
-		return result
-	}
-
+	fqns := make([]phputil.FQN, 0, len(st.classes))
 	for fqn := range st.classes {
-		if check(fqn) {
-			st.serviceProviders[fqn] = struct{}{}
-		}
+		fqns = append(fqns, fqn)
 	}
+	st.serviceProviders = phputil.ResolveReachable(fqns, func(fqn phputil.FQN) phputil.FQN {
+		if decl, ok := st.classes[fqn]; ok {
+			return decl.Extends
+		}
+		return ""
+	}, serviceProviderFQN)
 }

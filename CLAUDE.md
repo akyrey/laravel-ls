@@ -113,7 +113,7 @@ internal/
     documents.go                # DocumentStore — in-memory cache with disk fallback
     uri.go                      # URI/path conversion, UTF-16 position helpers
   phpnode/
-    parse.go                    # ParseBytes() / ParseFile() + FromNode() using tree-sitter
+    parse.go                    # ParseBytes() / ParseFile() / WalkPHPFiles() + FromNode() using tree-sitter
   phpwalk/
     visitor.go                  # Visitor interface + NullVisitor + all Info types
     walk.go                     # Walk(path, src, tree, v) — depth-first CST traversal
@@ -122,6 +122,7 @@ internal/
     fqn.go                      # FQN type, UseMap, FileContext + Resolve()
     case.go                     # Snake/Studly/Camel — mirrors Illuminate\Support\Str
     location.go                 # Location type (parser-agnostic byte-offset struct)
+    reachability.go             # ResolveReachable() — shared memoized extends-chain walk
 testdata/
   bindings/                     # PHP fixtures for container indexer tests
   models/                       # PHP fixtures for Eloquent indexer tests
