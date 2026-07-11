@@ -15,6 +15,28 @@ import (
 // diagSource is the source label shown in the editor for diagnostics.
 const diagSource = "laravel-lsp"
 
+// builtinModelAttrs are names that exist on every Eloquent model even though
+// no project file declares them: the conventional columns Laravel manages
+// (primary key, timestamps, soft-delete column), the runtime `pivot`
+// attribute, and Illuminate\Database\Eloquent\Model's own PHP properties
+// (reachable both as $model->exists and as $this->table inside a model).
+// Accesses to these must never be flagged as unknown.
+var builtinModelAttrs = map[string]bool{
+	// Conventional columns and runtime attributes.
+	"id": true, "created_at": true, "updated_at": true, "deleted_at": true,
+	"pivot": true,
+	// Public base-class properties.
+	"exists": true, "wasRecentlyCreated": true, "incrementing": true,
+	"timestamps": true, "preventsLazyLoading": true, "usesUniqueIds": true,
+	// Protected base-class properties, commonly read via $this-> in models.
+	"connection": true, "table": true, "primaryKey": true, "keyType": true,
+	"with": true, "withCount": true, "perPage": true, "attributes": true,
+	"original": true, "changes": true, "casts": true, "dateFormat": true,
+	"appends": true, "dispatchesEvents": true, "observables": true,
+	"relations": true, "touches": true, "hidden": true, "visible": true,
+	"fillable": true, "guarded": true,
+}
+
 // publishDiagnostics parses src and pushes a textDocument/publishDiagnostics
 // notification for any unrecognised Eloquent property accesses it finds.
 // Calling it with a nil models index clears existing diagnostics for the file.
@@ -78,6 +100,9 @@ func (v *diagVisitor) VisitClassMethod(n phpwalk.MethodInfo) {
 }
 
 func (v *diagVisitor) VisitPropertyFetch(n phpwalk.PropertyFetchInfo) {
+	if builtinModelAttrs[n.PropName] {
+		return
+	}
 	var params []phpwalk.ParamInfo
 	if v.encMethod != nil {
 		params = v.encMethod.Params

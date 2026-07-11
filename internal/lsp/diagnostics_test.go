@@ -110,3 +110,60 @@ class Ctrl {
 		t.Errorf("unexpected diagnostic for dynamic fetch: %s", d.Message)
 	}
 }
+
+func TestCollectDiagnostics_NoWarningForBuiltinModelAttributes(t *testing.T) {
+	modelsRoot := filepath.Join("..", "..", "testdata", "models")
+	models, err := eloquent.Walk(modelsRoot, []string{"."})
+	if err != nil {
+		t.Fatalf("eloquent.Walk: %v", err)
+	}
+
+	// None of these are in User's catalog, but every Eloquent model has
+	// them: primary key, timestamps, soft-delete column, pivot, and the
+	// base Model class's own PHP properties.
+	src := []byte(`<?php
+namespace App\Http\Controllers;
+use App\Models\User;
+class Ctrl {
+    public function show(User $user): void {
+        $user->id;
+        $user->created_at;
+        $user->updated_at;
+        $user->deleted_at;
+        $user->pivot;
+        $user->exists;
+        $user->wasRecentlyCreated;
+        $user->timestamps;
+        $user->incrementing;
+    }
+}`)
+	diags := collectDiagnostics(src, "/fake/Ctrl.php", models)
+	for _, d := range diags {
+		t.Errorf("unexpected diagnostic for built-in attribute: %s", d.Message)
+	}
+}
+
+func TestCollectDiagnostics_BaseModelPropsInsideModel(t *testing.T) {
+	modelsRoot := filepath.Join("..", "..", "testdata", "models")
+	models, err := eloquent.Walk(modelsRoot, []string{"."})
+	if err != nil {
+		t.Fatalf("eloquent.Walk: %v", err)
+	}
+
+	// $this-> access to inherited Model properties inside a model class.
+	src := []byte(`<?php
+namespace App\Models;
+use Illuminate\Database\Eloquent\Model;
+class User extends Model {
+    public function tableName(): string {
+        return $this->table ?? $this->getTable();
+    }
+    public function raw(): array {
+        return $this->attributes;
+    }
+}`)
+	diags := collectDiagnostics(src, "/fake/User.php", models)
+	for _, d := range diags {
+		t.Errorf("unexpected diagnostic for inherited Model property: %s", d.Message)
+	}
+}

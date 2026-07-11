@@ -258,7 +258,11 @@ hops (`$a->b->c->d`), not just one — verified by
 14. **`textDocument/publishDiagnostics`** — pushed on `DidOpen`/`DidChange`.
     Emits `Warning` for any `$model->undefinedProp` access on a model whose
     class is indexed. Cleared on `DidClose`. Does not fire for variables whose
-    type cannot be resolved (avoids false positives).
+    type cannot be resolved (avoids false positives), for dynamic fetches
+    (`$model->$attr`), or for built-in Eloquent attributes every model has
+    (`id`, `created_at`, `updated_at`, `deleted_at`, `pivot`, plus the base
+    `Model` class's own PHP properties — see `builtinModelAttrs` in
+    internal/lsp/diagnostics.go).
 
 **tree-sitter EndByte convention**: `EndByte()` is exclusive (one past the last
 byte), matching LSP's exclusive range end. `toLSPRange` uses it directly.
