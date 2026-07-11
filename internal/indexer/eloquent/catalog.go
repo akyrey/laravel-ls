@@ -1,6 +1,10 @@
 package eloquent
 
-import "github.com/akyrey/laravel-lsp/internal/phputil"
+import (
+	"sync"
+
+	"github.com/akyrey/laravel-lsp/internal/phputil"
+)
 
 // AttributeKind classifies the source of a model attribute entry.
 type AttributeKind int
@@ -76,6 +80,13 @@ type ModelCatalog struct {
 type ModelIndex struct {
 	byFQN map[phputil.FQN]*ModelCatalog
 	syms  *symbolTable // retained for incremental per-file reindex
+
+	// merged memoizes inheritance-merged catalog views per index
+	// generation (indexes are immutable once published, so views never go
+	// stale within one generation). Guarded by mu because LSP handlers
+	// call Lookup concurrently.
+	mu     sync.Mutex
+	merged map[phputil.FQN]*ModelCatalog
 }
 
 // NewModelIndex returns an empty, ready-to-use index.
@@ -86,11 +97,69 @@ func NewModelIndex() *ModelIndex {
 // Add stores or replaces a catalog entry. Typically called once per class.
 func (idx *ModelIndex) Add(c *ModelCatalog) {
 	idx.byFQN[c.Class] = c
+	idx.mu.Lock()
+	idx.merged = nil // catalogs changed; drop memoized inheritance views
+	idx.mu.Unlock()
 }
 
 // Lookup returns the catalog for the given model FQN, or nil if not indexed.
+// When the model extends another indexed class, the returned catalog is a
+// merged view that also exposes every inherited attribute; otherwise the
+// declared catalog is returned as-is.
 func (idx *ModelIndex) Lookup(fqn phputil.FQN) *ModelCatalog {
+	cat := idx.byFQN[fqn]
+	if cat == nil {
+		return nil
+	}
+	if idx.byFQN[cat.Extends] == nil {
+		return cat // no indexed ancestor — nothing to merge
+	}
+	return idx.mergedView(fqn, cat)
+}
+
+// LookupDeclared returns the catalog holding only the attributes declared in
+// the class body itself, with no inherited entries. Callers that mutate the
+// catalog (the ide-helper merge) must use this so writes land on the real
+// catalog rather than on a merged copy.
+func (idx *ModelIndex) LookupDeclared(fqn phputil.FQN) *ModelCatalog {
 	return idx.byFQN[fqn]
+}
+
+// mergedView builds (and memoizes) a catalog view whose ByExposed also
+// contains the attributes of every indexed ancestor. Entries are ordered
+// own-class-first so child declarations shadow parents in ranked results.
+// Source catalogs are never mutated — slices are copied before combining —
+// so catalogs shared with previous index generations stay untouched.
+func (idx *ModelIndex) mergedView(fqn phputil.FQN, cat *ModelCatalog) *ModelCatalog {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	if v, ok := idx.merged[fqn]; ok {
+		return v
+	}
+
+	view := &ModelCatalog{
+		Class:     cat.Class,
+		Path:      cat.Path,
+		Extends:   cat.Extends,
+		ByExposed: make(map[string][]ModelAttribute, len(cat.ByExposed)),
+	}
+	visited := make(map[phputil.FQN]bool)
+	for c := cat; c != nil && !visited[c.Class]; c = idx.byFQN[c.Extends] {
+		visited[c.Class] = true
+		for name, attrs := range c.ByExposed {
+			existing := view.ByExposed[name]
+			combined := make([]ModelAttribute, 0, len(existing)+len(attrs))
+			combined = append(combined, existing...)
+			combined = append(combined, attrs...)
+			view.ByExposed[name] = combined
+		}
+	}
+
+	if idx.merged == nil {
+		idx.merged = make(map[phputil.FQN]*ModelCatalog)
+	}
+	idx.merged[fqn] = view
+	return view
 }
 
 // Syms returns the retained symbol table, or nil if this index was not built

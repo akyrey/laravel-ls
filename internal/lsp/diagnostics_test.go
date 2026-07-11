@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -165,5 +166,49 @@ class User extends Model {
 	diags := collectDiagnostics(src, "/fake/User.php", models)
 	for _, d := range diags {
 		t.Errorf("unexpected diagnostic for inherited Model property: %s", d.Message)
+	}
+}
+
+func TestCollectDiagnostics_NoWarningForInheritedAttribute(t *testing.T) {
+	root := t.TempDir()
+	appDir := filepath.Join(root, "app", "Models")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	base := `<?php
+namespace App\Models;
+use Illuminate\Database\Eloquent\Model;
+abstract class BaseModel extends Model {
+    protected $fillable = ['tenant_id'];
+}`
+	child := `<?php
+namespace App\Models;
+class Invoice extends BaseModel {
+    protected $fillable = ['number'];
+}`
+	if err := os.WriteFile(filepath.Join(appDir, "BaseModel.php"), []byte(base), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "Invoice.php"), []byte(child), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	models, err := eloquent.Walk(root, []string{"app"})
+	if err != nil {
+		t.Fatalf("eloquent.Walk: %v", err)
+	}
+
+	src := []byte(`<?php
+namespace App\Http\Controllers;
+use App\Models\Invoice;
+class Ctrl {
+    public function show(Invoice $invoice): void {
+        $invoice->tenant_id;
+        $invoice->number;
+    }
+}`)
+	diags := collectDiagnostics(src, "/fake/Ctrl.php", models)
+	for _, d := range diags {
+		t.Errorf("unexpected diagnostic: %s", d.Message)
 	}
 }

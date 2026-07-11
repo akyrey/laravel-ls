@@ -95,7 +95,9 @@ func (v *mergeVisitor) VisitClass(n phpwalk.ClassInfo) {
 	}
 	props, methods := parseDocComment(doc)
 
-	cat := v.idx.Lookup(fqn)
+	// LookupDeclared, not Lookup: the entries appended below must land on
+	// the real catalog, not on an inheritance-merged copy.
+	cat := v.idx.LookupDeclared(fqn)
 	if cat == nil {
 		cat = &eloquent.ModelCatalog{
 			Class:     fqn,
