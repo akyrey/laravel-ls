@@ -296,3 +296,34 @@ class Foo {
 		}
 	}
 }
+
+func TestWalk_SkipsDynamicPropertyFetch(t *testing.T) {
+	src := []byte(`<?php
+class C {
+    public function f($obj, $attr) {
+        $obj->$attr;
+        $obj->{$attr};
+        $obj->real_prop;
+    }
+}
+`)
+	tree, err := phpnode.ParseBytes(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer tree.Close()
+
+	v := &collectingVisitor{}
+	phpwalk.Walk("test.php", src, tree, v)
+
+	if len(v.propFetches) != 1 {
+		names := make([]string, 0, len(v.propFetches))
+		for _, f := range v.propFetches {
+			names = append(names, f.PropName)
+		}
+		t.Fatalf("expected 1 property fetch (real_prop), got %d: %v", len(v.propFetches), names)
+	}
+	if v.propFetches[0].PropName != "real_prop" {
+		t.Errorf("PropName = %q, want %q", v.propFetches[0].PropName, "real_prop")
+	}
+}

@@ -87,3 +87,26 @@ class Ctrl {
 		t.Errorf("expected no diagnostics for unresolved var, got %d", len(diags))
 	}
 }
+
+func TestCollectDiagnostics_NoWarningForDynamicPropertyFetch(t *testing.T) {
+	modelsRoot := filepath.Join("..", "..", "testdata", "models")
+	models, err := eloquent.Walk(modelsRoot, []string{"."})
+	if err != nil {
+		t.Fatalf("eloquent.Walk: %v", err)
+	}
+
+	// $user->$attr is a dynamic access — the property name is unknowable
+	// statically, so no diagnostic must be emitted.
+	src := []byte(`<?php
+namespace App\Http\Controllers;
+use App\Models\User;
+class Ctrl {
+    public function show(User $user, string $attr): mixed {
+        return $user->$attr;
+    }
+}`)
+	diags := collectDiagnostics(src, "/fake/Ctrl.php", models)
+	for _, d := range diags {
+		t.Errorf("unexpected diagnostic for dynamic fetch: %s", d.Message)
+	}
+}

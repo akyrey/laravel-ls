@@ -331,12 +331,14 @@ func emitProperties(path string, src []byte, n *ts.Node, v Visitor) {
 // ── expression helpers ────────────────────────────────────────────────────
 
 func buildPropertyFetchInfo(path string, src []byte, n *ts.Node) (PropertyFetchInfo, bool) {
+	// Only literal property names are usable: dynamic fetches such as
+	// $obj->$attr (variable_name) or $obj->{$attr} cannot be resolved to an
+	// attribute name statically, so no event is emitted for them.
 	nameNode := n.ChildByFieldName("name")
-	if nameNode == nil || (nameNode.Kind() != "name" && nameNode.Kind() != "variable_name") {
+	if nameNode == nil || nameNode.Kind() != "name" {
 		return PropertyFetchInfo{}, false
 	}
 	propText := phpnode.NodeText(nameNode, src)
-	propText = strings.TrimPrefix(propText, "$")
 	varNode := n.ChildByFieldName("object")
 	if varNode == nil {
 		return PropertyFetchInfo{}, false
