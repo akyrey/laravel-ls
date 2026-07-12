@@ -272,3 +272,54 @@ func TestContentFromChanges(t *testing.T) {
 		})
 	}
 }
+
+func TestParseConfig_Diagnostics(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		cfg, err := parseConfig(map[string]any{})
+		if err != nil {
+			t.Fatalf("parseConfig: %v", err)
+		}
+		opts := cfg.diagOptions()
+		if !opts.enabled {
+			t.Error("diagnostics must default to enabled")
+		}
+		if opts.severity != protocol.DiagnosticSeverityWarning {
+			t.Errorf("severity = %v, want warning", opts.severity)
+		}
+	})
+
+	t.Run("explicit options", func(t *testing.T) {
+		cfg, err := parseConfig(map[string]any{
+			"diagnostics": map[string]any{
+				"enabled":          false,
+				"severity":         "hint",
+				"ignoreProperties": []string{"custom_prop"},
+			},
+		})
+		if err != nil {
+			t.Fatalf("parseConfig: %v", err)
+		}
+		opts := cfg.diagOptions()
+		if opts.enabled {
+			t.Error("enabled = true, want false")
+		}
+		if opts.severity != protocol.DiagnosticSeverityHint {
+			t.Errorf("severity = %v, want hint", opts.severity)
+		}
+		if !opts.ignore["custom_prop"] {
+			t.Error("ignoreProperties not applied")
+		}
+	})
+
+	t.Run("invalid severity falls back to warning", func(t *testing.T) {
+		cfg, err := parseConfig(map[string]any{
+			"diagnostics": map[string]any{"severity": "loud"},
+		})
+		if err != nil {
+			t.Fatalf("parseConfig: %v", err)
+		}
+		if opts := cfg.diagOptions(); opts.severity != protocol.DiagnosticSeverityWarning {
+			t.Errorf("severity = %v, want warning fallback", opts.severity)
+		}
+	})
+}

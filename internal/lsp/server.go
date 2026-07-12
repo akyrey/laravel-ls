@@ -31,6 +31,45 @@ type Config struct {
 	// ReferenceDirs are the directories walked when searching for references
 	// and rename sites. Defaults to ["app", "routes"].
 	ReferenceDirs []string `json:"referenceDirs"`
+
+	// Diagnostics tunes the unknown-property diagnostics.
+	Diagnostics DiagnosticsConfig `json:"diagnostics"`
+}
+
+// DiagnosticsConfig holds the diagnostics section of initializationOptions.
+type DiagnosticsConfig struct {
+	// Enabled toggles unknown-property diagnostics. Defaults to true.
+	Enabled *bool `json:"enabled"`
+	// Severity is "error", "warning", "information", or "hint".
+	// Defaults to "warning"; unknown values fall back to it.
+	Severity string `json:"severity"`
+	// IgnoreProperties lists property names that are never flagged, on any
+	// model — a project-level escape hatch for magic attributes the indexer
+	// cannot see.
+	IgnoreProperties []string `json:"ignoreProperties"`
+}
+
+// diagOptions converts the user-facing config into its runtime form.
+func (c Config) diagOptions() diagOptions {
+	opts := defaultDiagOptions()
+	if c.Diagnostics.Enabled != nil {
+		opts.enabled = *c.Diagnostics.Enabled
+	}
+	switch c.Diagnostics.Severity {
+	case "error":
+		opts.severity = protocol.DiagnosticSeverityError
+	case "information":
+		opts.severity = protocol.DiagnosticSeverityInformation
+	case "hint":
+		opts.severity = protocol.DiagnosticSeverityHint
+	}
+	if len(c.Diagnostics.IgnoreProperties) > 0 {
+		opts.ignore = make(map[string]bool, len(c.Diagnostics.IgnoreProperties))
+		for _, name := range c.Diagnostics.IgnoreProperties {
+			opts.ignore[name] = true
+		}
+	}
+	return opts
 }
 
 func defaultConfig() Config {
@@ -51,8 +90,9 @@ func defaultConfig() Config {
 func parseConfig(opts any) (Config, error) {
 	// Unmarshal into a zero struct so we can detect absent fields.
 	var raw struct {
-		ScanDirs      []string `json:"scanDirs"`
-		ReferenceDirs []string `json:"referenceDirs"`
+		ScanDirs      []string          `json:"scanDirs"`
+		ReferenceDirs []string          `json:"referenceDirs"`
+		Diagnostics   DiagnosticsConfig `json:"diagnostics"`
 	}
 	data, err := json.Marshal(opts)
 	if err != nil {
@@ -65,6 +105,7 @@ func parseConfig(opts any) (Config, error) {
 	cfg := Config{
 		ScanDirs:      raw.ScanDirs,
 		ReferenceDirs: raw.ReferenceDirs,
+		Diagnostics:   raw.Diagnostics,
 	}
 	if len(cfg.ScanDirs) == 0 {
 		cfg.ScanDirs = []string{"app"}
@@ -216,10 +257,10 @@ func (s *Server) DidOpen(ctx *glsp.Context, p *protocol.DidOpenTextDocumentParam
 	src := []byte(p.TextDocument.Text)
 	s.docs.Set(p.TextDocument.URI, src)
 	s.mu.RLock()
-	models := s.models
+	models, opts := s.models, s.cfg.diagOptions()
 	s.mu.RUnlock()
 	path := URIToPath(p.TextDocument.URI)
-	publishDiagnostics(ctx, p.TextDocument.URI, src, path, models)
+	publishDiagnostics(ctx, p.TextDocument.URI, src, path, models, opts)
 	return nil
 }
 
@@ -231,10 +272,10 @@ func (s *Server) DidChange(ctx *glsp.Context, p *protocol.DidChangeTextDocumentP
 	}
 	s.docs.Set(p.TextDocument.URI, src)
 	s.mu.RLock()
-	models := s.models
+	models, opts := s.models, s.cfg.diagOptions()
 	s.mu.RUnlock()
 	path := URIToPath(p.TextDocument.URI)
-	publishDiagnostics(ctx, p.TextDocument.URI, src, path, models)
+	publishDiagnostics(ctx, p.TextDocument.URI, src, path, models, opts)
 	return nil
 }
 
@@ -262,7 +303,7 @@ func contentFromChanges(changes []any) []byte {
 func (s *Server) DidClose(ctx *glsp.Context, p *protocol.DidCloseTextDocumentParams) error {
 	s.docs.Delete(p.TextDocument.URI)
 	// Clear diagnostics so they don't linger after the file is closed.
-	publishDiagnostics(ctx, p.TextDocument.URI, nil, "", nil)
+	publishDiagnostics(ctx, p.TextDocument.URI, nil, "", nil, defaultDiagOptions())
 	return nil
 }
 

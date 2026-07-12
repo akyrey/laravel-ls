@@ -15,6 +15,18 @@ import (
 // diagSource is the source label shown in the editor for diagnostics.
 const diagSource = "laravel-lsp"
 
+// diagOptions is the runtime form of the diagnostics initializationOptions.
+type diagOptions struct {
+	enabled  bool
+	severity protocol.DiagnosticSeverity
+	ignore   map[string]bool // extra property names never flagged
+}
+
+// defaultDiagOptions returns the options used when the client sends none.
+func defaultDiagOptions() diagOptions {
+	return diagOptions{enabled: true, severity: protocol.DiagnosticSeverityWarning}
+}
+
 // builtinModelAttrs are names that exist on every Eloquent model even though
 // no project file declares them: the conventional columns Laravel manages
 // (primary key, timestamps, soft-delete column), the runtime `pivot`
@@ -40,10 +52,10 @@ var builtinModelAttrs = map[string]bool{
 // publishDiagnostics parses src and pushes a textDocument/publishDiagnostics
 // notification for any unrecognised Eloquent property accesses it finds.
 // Calling it with a nil models index clears existing diagnostics for the file.
-func publishDiagnostics(ctx *glsp.Context, uri protocol.DocumentUri, src []byte, path string, models *eloquent.ModelIndex) {
+func publishDiagnostics(ctx *glsp.Context, uri protocol.DocumentUri, src []byte, path string, models *eloquent.ModelIndex, opts diagOptions) {
 	diags := []protocol.Diagnostic{}
 	if models != nil && len(src) > 0 {
-		if collected := collectDiagnostics(src, path, models); collected != nil {
+		if collected := collectDiagnostics(src, path, models, opts); collected != nil {
 			diags = collected
 		}
 	}
@@ -55,7 +67,10 @@ func publishDiagnostics(ctx *glsp.Context, uri protocol.DocumentUri, src []byte,
 
 // collectDiagnostics returns Warning diagnostics for every $model->propName
 // access where propName is not found in the model's attribute catalog.
-func collectDiagnostics(src []byte, path string, models *eloquent.ModelIndex) []protocol.Diagnostic {
+func collectDiagnostics(src []byte, path string, models *eloquent.ModelIndex, opts diagOptions) []protocol.Diagnostic {
+	if !opts.enabled {
+		return nil
+	}
 	tree, err := phpnode.ParseBytes(src)
 	if err != nil {
 		return nil
@@ -67,6 +82,7 @@ func collectDiagnostics(src []byte, path string, models *eloquent.ModelIndex) []
 		path:   path,
 		src:    src,
 		models: models,
+		opts:   opts,
 	}
 	phpwalk.Walk(path, src, tree, dv)
 	return dv.diags
@@ -78,6 +94,7 @@ type diagVisitor struct {
 	path         string
 	src          []byte
 	models       *eloquent.ModelIndex
+	opts         diagOptions
 	encClass     phputil.FQN
 	encMethod    *phpwalk.MethodInfo
 	assignedVars map[string]phputil.FQN
@@ -100,7 +117,7 @@ func (v *diagVisitor) VisitClassMethod(n phpwalk.MethodInfo) {
 }
 
 func (v *diagVisitor) VisitPropertyFetch(n phpwalk.PropertyFetchInfo) {
-	if builtinModelAttrs[n.PropName] {
+	if builtinModelAttrs[n.PropName] || v.opts.ignore[n.PropName] {
 		return
 	}
 	var params []phpwalk.ParamInfo
@@ -119,7 +136,7 @@ func (v *diagVisitor) VisitPropertyFetch(n phpwalk.PropertyFetchInfo) {
 		return
 	}
 
-	sev := protocol.DiagnosticSeverityWarning
+	sev := v.opts.severity
 	src := diagSource
 	v.diags = append(v.diags, protocol.Diagnostic{
 		Range:    toLSPRange(n.PropLocation, v.src),

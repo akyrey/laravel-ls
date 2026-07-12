@@ -54,7 +54,12 @@ Passed by the editor in the LSP `initialize` request. All fields are optional.
 ```json
 {
   "scanDirs":      ["app", "Modules/*/app"],
-  "referenceDirs": ["app", "routes", "Modules/*/app", "Modules/*/routes"]
+  "referenceDirs": ["app", "routes", "Modules/*/app", "Modules/*/routes"],
+  "diagnostics": {
+    "enabled": true,
+    "severity": "warning",
+    "ignoreProperties": ["some_magic_attr"]
+  }
 }
 ```
 
@@ -62,6 +67,9 @@ Passed by the editor in the LSP `initialize` request. All fields are optional.
 |-------|---------|---------|
 | `scanDirs` | `["app"]` | Directories walked to build the container + Eloquent indexes |
 | `referenceDirs` | *(auto)* | Directories walked when finding references and rename sites. Defaults to `scanDirs + ["routes"]` when not set. |
+| `diagnostics.enabled` | `true` | Toggle unknown-property diagnostics |
+| `diagnostics.severity` | `"warning"` | One of `error`, `warning`, `information`, `hint` (unknown values fall back to warning) |
+| `diagnostics.ignoreProperties` | `[]` | Property names never flagged, on any model |
 
 Both fields support single-level glob patterns (`Modules/*/app`). `**` is not
 supported. Patterns are expanded via `filepath.Glob` at indexing time.
