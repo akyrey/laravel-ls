@@ -230,7 +230,8 @@ always use the full `$`-prefixed string.
    or `AbstractClass::class` usages (container) across `app/` and `routes/`.
 
 7. **`textDocument/completion`** — property name completions after `->` using
-   the Eloquent model index.
+   the Eloquent model index. Follows relationship hops in the chain before the
+   cursor (`$user->posts->` completes the related model's attributes).
 
 8. **`textDocument/hover`** — shows attribute kind and model FQN for Eloquent
    properties; shows bound concrete for container abstracts.

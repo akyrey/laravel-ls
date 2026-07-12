@@ -37,9 +37,11 @@ func (s *Server) Completion(_ *glsp.Context, p *protocol.CompletionParams) (any,
 	return items, nil
 }
 
-// eloquentCompletions is the pure-function core of Completion.
+// eloquentCompletions is the pure-function core of Completion. It resolves
+// the variable's model type and then follows any relationship hops in the
+// chain before the cursor ($user->posts-> completes Post's attributes).
 func eloquentCompletions(src []byte, path string, offset int, models *eloquent.ModelIndex) []protocol.CompletionItem {
-	varVal := lhsBeforeArrow(src, offset)
+	varVal, segs := chainBeforeArrow(src, offset)
 	if varVal == "" {
 		return nil
 	}
@@ -47,6 +49,22 @@ func eloquentCompletions(src []byte, path string, offset int, models *eloquent.M
 	fqn := resolveVarTypeAtOffset(src, path, varVal, offset)
 	if fqn == "" {
 		return nil
+	}
+	for _, seg := range segs {
+		cat := models.Lookup(fqn)
+		if cat == nil {
+			return nil
+		}
+		fqn = ""
+		for _, a := range cat.ByExposed[seg] {
+			if a.RelatedFQN != "" {
+				fqn = a.RelatedFQN
+				break
+			}
+		}
+		if fqn == "" {
+			return nil
+		}
 	}
 	cat := models.Lookup(fqn)
 	if cat == nil {
@@ -62,28 +80,51 @@ func eloquentCompletions(src []byte, path string, offset int, models *eloquent.M
 }
 
 // lhsBeforeArrow scans backwards from offset to detect `$varName->` and
-// returns the variable token. Returns "" when the pattern is not present.
+// returns the variable token. Returns "" when the pattern is not present or
+// when the access is chained ($a->b->).
 func lhsBeforeArrow(src []byte, offset int) string {
+	varVal, segs := chainBeforeArrow(src, offset)
+	if len(segs) > 0 {
+		return ""
+	}
+	return varVal
+}
+
+// chainBeforeArrow scans backwards from offset to detect
+// `$varName->seg1->seg2-> ...` and returns the variable token (with its $
+// sigil) plus the property segments between it and the cursor, in source
+// order. Returns ("", nil) when the text before the cursor is not a simple
+// property-access chain (e.g. a method-call chain).
+func chainBeforeArrow(src []byte, offset int) (string, []string) {
 	pos := offset
+	// Skip any partially typed identifier after the trigger.
 	for pos > 0 && isIdentByte(src[pos-1]) {
 		pos--
 	}
-	if pos < 2 || src[pos-1] != '>' || src[pos-2] != '-' {
-		return ""
+	var segs []string
+	for {
+		if pos < 2 || src[pos-1] != '>' || src[pos-2] != '-' {
+			return "", nil
+		}
+		pos -= 2
+		for pos > 0 && (src[pos-1] == ' ' || src[pos-1] == '\t') {
+			pos--
+		}
+		end := pos
+		for pos > 0 && isIdentByte(src[pos-1]) {
+			pos--
+		}
+		if pos == end {
+			return "", nil // not an identifier (e.g. `)` from a call chain)
+		}
+		if pos > 0 && src[pos-1] == '$' {
+			return string(src[pos-1 : end]), segs
+		}
+		segs = append([]string{string(src[pos:end])}, segs...)
+		for pos > 0 && (src[pos-1] == ' ' || src[pos-1] == '\t') {
+			pos--
+		}
 	}
-	pos -= 2
-	for pos > 0 && (src[pos-1] == ' ' || src[pos-1] == '\t') {
-		pos--
-	}
-	end := pos
-	for pos > 0 && isIdentByte(src[pos-1]) {
-		pos--
-	}
-	if pos == 0 || src[pos-1] != '$' || pos == end {
-		return ""
-	}
-	pos--
-	return string(src[pos:end])
 }
 
 func isIdentByte(b byte) bool {

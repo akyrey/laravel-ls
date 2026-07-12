@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"bytes"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -138,5 +139,46 @@ func TestEloquentCompletions_NoMatch(t *testing.T) {
 	items := eloquentCompletions(src, "/fake.php", len(src), models)
 	if len(items) != 0 {
 		t.Errorf("expected no items for unknown var, got %d", len(items))
+	}
+}
+
+func TestEloquentCompletions_RelationshipChain(t *testing.T) {
+	modelsRoot := filepath.Join("..", "..", "testdata", "models")
+	models, err := eloquent.Walk(modelsRoot, []string{"."})
+	if err != nil {
+		t.Fatalf("eloquent.Walk: %v", err)
+	}
+
+	src := []byte(`<?php
+namespace App\Http\Controllers;
+use App\Models\Post;
+class Ctrl {
+    public function show(Post $post): void {
+        $post->author->
+    }
+}`)
+	needle := []byte("$post->author->")
+	idx := bytes.Index(src, needle)
+	if idx < 0 {
+		t.Fatal("needle not found")
+	}
+	offset := idx + len(needle)
+
+	items := eloquentCompletions(src, "/fake/Ctrl.php", offset, models)
+	if len(items) == 0 {
+		t.Fatal("expected completions through the relationship chain, got none")
+	}
+	found := false
+	for _, it := range items {
+		if it.Label == "email_address" {
+			found = true
+		}
+	}
+	if !found {
+		labels := make([]string, 0, len(items))
+		for _, it := range items {
+			labels = append(labels, it.Label)
+		}
+		t.Errorf("email_address (User attribute) not offered; got %v", labels)
 	}
 }
