@@ -436,3 +436,48 @@ $c = $callable('not collected');
 		t.Errorf("first arg string value = %q, want app.name", got)
 	}
 }
+
+func TestStringValue_DoubleQuotedAndInterpolated(t *testing.T) {
+	src := []byte(`<?php
+$a = ['sq' => 'single', 'dq' => "double", 'interp' => "pre $var post"];`)
+	tree, err := phpnode.ParseBytes(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer tree.Close()
+
+	got := map[string]string{}
+	v := &collectingVisitor{}
+	phpwalk.Walk("t.php", src, tree, v)
+	if len(v.assigns) != 1 {
+		t.Fatalf("assigns = %d, want 1", len(v.assigns))
+	}
+	arr := v.assigns[0].RHSRaw
+	for i := uint(0); i < arr.ChildCount(); i++ {
+		item := arr.Child(i)
+		if item.Kind() != "array_element_initializer" {
+			continue
+		}
+		var key, val string
+		for j := uint(0); j < item.ChildCount(); j++ {
+			c := item.Child(j)
+			if phpwalk.IsStringLiteral(c) {
+				if key == "" {
+					key = phpwalk.StringValue(c, src)
+				} else {
+					val = phpwalk.StringValue(c, src)
+				}
+			}
+		}
+		got[key] = val
+	}
+	if got["sq"] != "single" {
+		t.Errorf("single-quoted value = %q, want %q", got["sq"], "single")
+	}
+	if got["dq"] != "double" {
+		t.Errorf("double-quoted value = %q, want %q", got["dq"], "double")
+	}
+	if got["interp"] != "" {
+		t.Errorf("interpolated value = %q, want empty (unknowable statically)", got["interp"])
+	}
+}

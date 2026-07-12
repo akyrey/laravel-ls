@@ -266,10 +266,11 @@ hops (`$a->b->c->d`), not just one — verified by
 `TestResolveExprType_MultiHopRelationshipChain` in internal/lsp/scope_test.go.
 
 12. **`textDocument/rename`** — Eloquent property rename across files. Reference
-    sites (`$model->propName`) and method-based declaration sites (modern/legacy
-    accessors) are renamed. Array-based declarations (`$fillable`, `$casts`, etc.)
-    are not renamed automatically.
-    Container abstract rename is out of scope.
+    sites (`$model->propName`), method-based declaration sites (modern/legacy
+    accessors), and array-based declarations (`$fillable`, `$casts`, `$appends`,
+    `$hidden`, plus the Laravel 11 `casts()` method) are all renamed; array
+    entries keep their original quote style. The new name must be a snake_case
+    identifier. Container abstract rename is out of scope.
 
 13. **`textDocument/prepareRename`** — validates the cursor is on a renameable
     Eloquent property and returns the exact token range. Returns nil for
@@ -340,6 +341,8 @@ byte), matching LSP's exclusive range end. `toLSPRange` uses it directly.
 
 - `textDocument/rename` for container abstracts (requires full PHP class rename)
 - Diagnostics for renamed properties (stale after rename until next reindex)
+- Interpolated strings (`"pre $var post"`) are treated as unknowable — no
+  string-reference navigation, no array-entry indexing.
 
 ## Dependencies
 

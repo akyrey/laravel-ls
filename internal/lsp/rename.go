@@ -6,6 +6,7 @@ import (
 
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
+	ts "github.com/tree-sitter/go-tree-sitter"
 
 	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
 	"github.com/akyrey/laravel-lsp/internal/phpnode"
@@ -187,35 +188,47 @@ func collectDeclReplacements(
 		return nil
 	}
 
+	// Group the work per declaring file: method-based declarations rename
+	// the method identifier; array-based ones ($fillable, $casts, ...,
+	// including the casts() method) rename the quoted string entry.
+	type fileWork struct {
+		methods []declMethodEntry
+		arrays  bool
+	}
 	seen := make(map[string]bool)
-	var entries []declMethodEntry
+	work := make(map[string]*fileWork)
+	at := func(path string) *fileWork {
+		if work[path] == nil {
+			work[path] = &fileWork{}
+		}
+		return work[path]
+	}
 	for _, a := range attrs {
-		if a.Source != eloquent.SourceAST || a.MethodName == "" || a.Location.Zero() {
+		if a.Source != eloquent.SourceAST || a.Location.Zero() {
 			continue
 		}
 		switch a.Kind {
 		case eloquent.ModernAccessor, eloquent.LegacyAccessor, eloquent.LegacyMutator, eloquent.Relationship:
-		default:
-			continue
+			if a.MethodName == "" {
+				continue
+			}
+			key := a.Location.Path + "|" + a.MethodName
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			fw := at(a.Location.Path)
+			fw.methods = append(fw.methods, declMethodEntry{path: a.Location.Path, methodName: a.MethodName, kind: a.Kind})
+		case eloquent.FillableArray, eloquent.CastArray, eloquent.AppendsArray, eloquent.HiddenArray:
+			at(a.Location.Path).arrays = true
 		}
-		key := a.Location.Path + "|" + a.MethodName
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		entries = append(entries, declMethodEntry{path: a.Location.Path, methodName: a.MethodName, kind: a.Kind})
 	}
-	if len(entries) == 0 {
+	if len(work) == 0 {
 		return nil
 	}
 
-	byFile := make(map[string][]declMethodEntry)
-	for _, e := range entries {
-		byFile[e.path] = append(byFile[e.path], e)
-	}
-
 	var reps []textReplacement
-	for filePath, fileEntries := range byFile {
+	for filePath, fw := range work {
 		src, err := docs.Read(PathToURI(filePath))
 		if err != nil {
 			continue
@@ -225,10 +238,12 @@ func collectDeclReplacements(
 			continue
 		}
 		mv := &declRenameVisitor{
-			path:    filePath,
-			src:     src,
-			entries: fileEntries,
-			newName: newName,
+			path:         filePath,
+			src:          src,
+			entries:      fw.methods,
+			renameArrays: fw.arrays,
+			oldName:      sym.propName,
+			newName:      newName,
 		}
 		phpwalk.Walk(filePath, src, tree, mv)
 		tree.Close() // not deferred: this runs inside a loop
@@ -247,11 +262,20 @@ type declRenameVisitor struct {
 	path         string
 	src          []byte
 	entries      []declMethodEntry
+	renameArrays bool
+	oldName      string
 	newName      string
 	replacements []textReplacement
 }
 
 func (v *declRenameVisitor) VisitClassMethod(n phpwalk.MethodInfo) {
+	// Laravel 11 casts() method: rename the array key inside its body.
+	if v.renameArrays && n.Name == "casts" {
+		if strNode := eloquent.CastsMethodItemNamed(n.Raw, v.src, v.oldName); strNode != nil {
+			v.appendStringReplacement(strNode)
+		}
+		return
+	}
 	for _, e := range v.entries {
 		if e.methodName != n.Name {
 			continue
@@ -266,6 +290,34 @@ func (v *declRenameVisitor) VisitClassMethod(n phpwalk.MethodInfo) {
 		})
 		return
 	}
+}
+
+// VisitProperty renames the matching entry of $fillable / $casts / $appends /
+// $hidden array declarations.
+func (v *declRenameVisitor) VisitProperty(n phpwalk.PropertyInfo) {
+	if !v.renameArrays {
+		return
+	}
+	kind, ok := eloquent.ArrayPropKinds[n.PropName]
+	if !ok || n.ValueRaw == nil {
+		return
+	}
+	if strNode := eloquent.ArrayItemNamed(kind, n.ValueRaw, v.src, v.oldName); strNode != nil {
+		v.appendStringReplacement(strNode)
+	}
+}
+
+// appendStringReplacement replaces a whole string literal node with the new
+// name, preserving the original quote character.
+func (v *declRenameVisitor) appendStringReplacement(strNode *ts.Node) {
+	quote := "'"
+	if b := v.src[strNode.StartByte()]; b == '"' {
+		quote = "\""
+	}
+	v.replacements = append(v.replacements, textReplacement{
+		loc:     phpnode.FromNode(v.path, strNode),
+		newText: quote + v.newName + quote,
+	})
 }
 
 // methodNameFor computes the PHP method name for a given kind and new

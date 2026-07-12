@@ -201,7 +201,7 @@ func (v *defVisitor) VisitFunctionCall(n phpwalk.FunctionCallInfo) {
 		return
 	}
 	arg := n.Args[0]
-	if arg.Kind() != "string" || !cursorOnNode(v.offset, arg) {
+	if !phpwalk.IsStringLiteral(arg) || !cursorOnNode(v.offset, arg) {
 		return
 	}
 	if loc, ok := targets[phpwalk.StringValue(arg, n.Src)]; ok && !loc.Zero() {

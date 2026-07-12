@@ -39,18 +39,36 @@ func UnwrapTypeName(n *ts.Node, src []byte) string {
 	return unwrapTypeName(src, n)
 }
 
+// IsStringLiteral reports whether n is a PHP string literal node: a
+// single-quoted "string" or a double-quoted "encapsed_string".
+func IsStringLiteral(n *ts.Node) bool {
+	return n != nil && (n.Kind() == "string" || n.Kind() == "encapsed_string")
+}
+
 // StringValue extracts the unquoted content of a PHP string literal node.
-// tree-sitter-php represents 'email' as: string { ' string_content "email" ' }.
-// Returns "" when n is not a string node.
+// tree-sitter-php represents 'email' as string { ' string_content ' } and
+// "email" as encapsed_string { " string_content " }. Returns "" when n is
+// not a string literal or contains interpolation ("$var") — an interpolated
+// value is unknowable statically.
 func StringValue(n *ts.Node, src []byte) string {
-	if n == nil || n.Kind() != "string" {
+	if !IsStringLiteral(n) {
 		return ""
 	}
+	content := ""
 	for i := uint(0); i < n.ChildCount(); i++ {
 		child := n.Child(i)
-		if child.Kind() == "string_content" {
-			return phpnode.NodeText(child, src)
+		switch {
+		case child.Kind() == "string_content":
+			if content != "" {
+				return "" // split content implies interpolation between parts
+			}
+			content = phpnode.NodeText(child, src)
+		case child.IsNamed() && child.Kind() != "string_content":
+			return "" // interpolation or escape sequence node
 		}
+	}
+	if content != "" {
+		return content
 	}
 	// Fallback: strip surrounding quote characters from the raw node text.
 	v := phpnode.NodeText(n, src)

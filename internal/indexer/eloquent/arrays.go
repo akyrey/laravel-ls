@@ -94,13 +94,13 @@ func arrayItemNameAndNode(kind AttributeKind, item *ts.Node, src []byte) (string
 	firstStrIdx := -1
 	for i := uint(0); i < item.ChildCount(); i++ {
 		child := item.Child(i)
-		switch child.Kind() {
-		case "string":
+		switch {
+		case phpwalk.IsStringLiteral(child):
 			if firstStrIdx < 0 {
 				firstStrIdx = int(i)
 			}
 			strNodes = append(strNodes, child)
-		case "=>":
+		case child.Kind() == "=>":
 			arrowIdx = int(i)
 		}
 	}
@@ -142,6 +142,51 @@ func ArrayItemAtOffset(kind AttributeKind, valueNode *ts.Node, src []byte, offse
 		}
 	}
 	return "", nil
+}
+
+// ArrayItemNamed returns the string node of the element in valueNode (an
+// array_creation_expression) whose extracted name equals name, or nil.
+// Used by the LSP layer to rename array-declared attributes in place.
+func ArrayItemNamed(kind AttributeKind, valueNode *ts.Node, src []byte, name string) *ts.Node {
+	if valueNode == nil || valueNode.Kind() != "array_creation_expression" {
+		return nil
+	}
+	for i := uint(0); i < valueNode.ChildCount(); i++ {
+		item := valueNode.Child(i)
+		if item.Kind() != "array_element_initializer" {
+			continue
+		}
+		itemName, strNode := arrayItemNameAndNode(kind, item, src)
+		if itemName == name {
+			return strNode
+		}
+	}
+	return nil
+}
+
+// CastsMethodItemNamed returns the key string node for name inside the array
+// literal(s) returned by a Laravel 11 casts() method, or nil.
+func CastsMethodItemNamed(methodNode *ts.Node, src []byte, name string) *ts.Node {
+	bodyNode := methodNode.ChildByFieldName("body")
+	if bodyNode == nil {
+		return nil
+	}
+	for i := uint(0); i < bodyNode.ChildCount(); i++ {
+		stmt := bodyNode.Child(i)
+		if stmt.Kind() != "return_statement" {
+			continue
+		}
+		for j := uint(0); j < stmt.ChildCount(); j++ {
+			arr := stmt.Child(j)
+			if arr.Kind() != "array_creation_expression" {
+				continue
+			}
+			if strNode := ArrayItemNamed(CastArray, arr, src, name); strNode != nil {
+				return strNode
+			}
+		}
+	}
+	return nil
 }
 
 // stringValue extracts the unquoted content of a PHP string literal node.

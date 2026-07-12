@@ -123,7 +123,7 @@ func keyAndValue(item *ts.Node) (key, value *ts.Node) {
 		switch {
 		case child.Kind() == "=>":
 			arrowSeen = true
-		case !arrowSeen && child.Kind() == "string" && key == nil:
+		case !arrowSeen && phpwalk.IsStringLiteral(child) && key == nil:
 			key = child
 		case arrowSeen && child.IsNamed() && value == nil:
 			value = child

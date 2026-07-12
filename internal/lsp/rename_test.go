@@ -311,3 +311,59 @@ func TestRename_RejectsInvalidNewName(t *testing.T) {
 		t.Fatal("Rename(valid): expected a WorkspaceEdit, got nil")
 	}
 }
+
+func TestCollectDeclReplacements_ArrayDeclarations(t *testing.T) {
+	root := t.TempDir()
+	modelDir := filepath.Join(root, "app", "Models")
+	if err := os.MkdirAll(modelDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	model := `<?php
+namespace App\Models;
+use Illuminate\Database\Eloquent\Model;
+class User extends Model {
+    protected $fillable = ['nickname', 'email'];
+    protected $casts = ['nickname' => 'string'];
+    protected $appends = ["nickname"];
+    protected $hidden = ['secret'];
+    protected function casts(): array
+    {
+        return ['nickname' => 'encrypted'];
+    }
+}`
+	userPath := filepath.Join(modelDir, "User.php")
+	if err := os.WriteFile(userPath, []byte(model), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	models, err := eloquent.Walk(root, []string{"app"})
+	if err != nil {
+		t.Fatalf("eloquent.Walk: %v", err)
+	}
+	src, err := os.ReadFile(userPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sym := &refSymbol{modelFQN: "App\\Models\\User", propName: "nickname"}
+	reps := collectDeclReplacements(sym, models, "alias", newDocumentStore())
+
+	// $fillable entry, $casts key, $appends entry (double-quoted), and the
+	// casts() method key — four array-declaration sites.
+	if len(reps) != 4 {
+		for _, r := range reps {
+			t.Logf("replacement: %+v -> %q", r.loc, r.newText)
+		}
+		t.Fatalf("replacements = %d, want 4", len(reps))
+	}
+	for _, r := range reps {
+		old := string(src[r.loc.StartByte:r.loc.EndByte])
+		quote := old[0]
+		if old != string(quote)+"nickname"+string(quote) {
+			t.Errorf("replacement targets %q, want a quoted 'nickname' string", old)
+		}
+		if r.newText != string(quote)+"alias"+string(quote) {
+			t.Errorf("newText = %q, want quote-preserving %q", r.newText, string(quote)+"alias"+string(quote))
+		}
+	}
+}

@@ -88,7 +88,7 @@ func (v *stringRefVisitor) VisitFunctionCall(n phpwalk.FunctionCallInfo) {
 		return
 	}
 	arg := n.Args[0]
-	if arg.Kind() != "string" || !cursorOnNode(v.offset, arg) {
+	if !phpwalk.IsStringLiteral(arg) || !cursorOnNode(v.offset, arg) {
 		return
 	}
 	v.fnName = n.Name
