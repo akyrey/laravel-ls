@@ -33,6 +33,9 @@ const (
 	IdeHelperProperty
 	// IdeHelperMethod: a @method entry from _ide_helper_models.php.
 	IdeHelperMethod
+	// Scope: a scopeXxx() query-scope method. Not an attribute — routed into
+	// ModelCatalog.Scopes, never into ByExposed.
+	Scope
 )
 
 // AttributeSource indicates whether an entry came from real source code or
@@ -77,6 +80,10 @@ type ModelCatalog struct {
 	// method AND a $fillable or $casts declaration, or in the ide-helper stub.
 	// Query-time ranking: ModernAccessor > LegacyAccessor/Mutator > array entries > ide-helper.
 	ByExposed map[string][]ModelAttribute
+
+	// Scopes maps a query-scope call name ("active" for scopeActive) to the
+	// scope method's declaration. Nil when the class declares no scopes.
+	Scopes map[string]phputil.Location
 }
 
 // ModelIndex is the full Eloquent symbol table for a project.
@@ -173,6 +180,7 @@ func (idx *ModelIndex) mergedView(fqn phputil.FQN, cat *ModelCatalog) *ModelCata
 		Extends:    cat.Extends,
 		UsesTraits: cat.UsesTraits,
 		ByExposed:  make(map[string][]ModelAttribute, len(cat.ByExposed)),
+		Scopes:     make(map[string]phputil.Location),
 	}
 	appendAttrs := func(c *ModelCatalog) {
 		for name, attrs := range c.ByExposed {
@@ -181,6 +189,11 @@ func (idx *ModelIndex) mergedView(fqn phputil.FQN, cat *ModelCatalog) *ModelCata
 			combined = append(combined, existing...)
 			combined = append(combined, attrs...)
 			view.ByExposed[name] = combined
+		}
+		for name, loc := range c.Scopes {
+			if _, ok := view.Scopes[name]; !ok { // own-class scope wins
+				view.Scopes[name] = loc
+			}
 		}
 	}
 

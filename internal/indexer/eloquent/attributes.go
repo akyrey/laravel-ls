@@ -30,6 +30,7 @@ var relationBuilderMethods = map[string]bool{
 var (
 	legacyGetterRe = regexp.MustCompile(`^get([A-Z].*)Attribute$`)
 	legacySetterRe = regexp.MustCompile(`^set([A-Z].*)Attribute$`)
+	scopeMethodRe  = regexp.MustCompile(`^scope([A-Z].*)$`)
 )
 
 // extractMethods inspects every method_declaration in classNode and returns
@@ -63,6 +64,19 @@ func extractMethods(path string, classNode *ts.Node, src []byte, fc *phputil.Fil
 		// Its return array is equivalent to the $casts property.
 		if methodName == "casts" {
 			out = append(out, extractCastsMethod(path, m, src)...)
+			continue
+		}
+
+		// Query scope: scopeActive() is called as Model::active().
+		if m2 := scopeMethodRe.FindStringSubmatch(methodName); m2 != nil {
+			rest := m2[1]
+			out = append(out, ModelAttribute{
+				ExposedName: strings.ToLower(rest[:1]) + rest[1:],
+				MethodName:  methodName,
+				Kind:        Scope,
+				Source:      SourceAST,
+				Location:    loc,
+			})
 			continue
 		}
 

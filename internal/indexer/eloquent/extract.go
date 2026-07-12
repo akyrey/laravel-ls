@@ -50,13 +50,25 @@ func (v *extractVisitor) VisitClass(n phpwalk.ClassInfo) {
 		ByExposed:  make(map[string][]ModelAttribute),
 	}
 
-	attrs := extractMethods(v.path, n.Raw, n.Src, v.fc)
-	attrs = append(attrs, extractArrayProperties(v.path, n.Raw, n.Src)...)
-	for _, a := range attrs {
-		catalog.ByExposed[a.ExposedName] = append(catalog.ByExposed[a.ExposedName], a)
-	}
+	addAttrs(catalog, extractMethods(v.path, n.Raw, n.Src, v.fc))
+	addAttrs(catalog, extractArrayProperties(v.path, n.Raw, n.Src))
 
 	v.catalogs = append(v.catalogs, catalog)
+}
+
+// addAttrs routes extracted attributes into the catalog: query scopes into
+// Scopes, everything else into ByExposed.
+func addAttrs(catalog *ModelCatalog, attrs []ModelAttribute) {
+	for _, a := range attrs {
+		if a.Kind == Scope {
+			if catalog.Scopes == nil {
+				catalog.Scopes = make(map[string]phputil.Location)
+			}
+			catalog.Scopes[a.ExposedName] = a.Location
+			continue
+		}
+		catalog.ByExposed[a.ExposedName] = append(catalog.ByExposed[a.ExposedName], a)
+	}
 }
 
 // VisitTrait extracts an attribute catalog from a trait declaration using the
@@ -72,11 +84,8 @@ func (v *extractVisitor) VisitTrait(n phpwalk.TraitInfo) {
 		UsesTraits: resolveNames(v.fc, n.UsesTraits),
 		ByExposed:  make(map[string][]ModelAttribute),
 	}
-	attrs := extractMethods(v.path, n.Raw, n.Src, v.fc)
-	attrs = append(attrs, extractArrayProperties(v.path, n.Raw, n.Src)...)
-	for _, a := range attrs {
-		catalog.ByExposed[a.ExposedName] = append(catalog.ByExposed[a.ExposedName], a)
-	}
+	addAttrs(catalog, extractMethods(v.path, n.Raw, n.Src, v.fc))
+	addAttrs(catalog, extractArrayProperties(v.path, n.Raw, n.Src))
 	v.traitCatalogs = append(v.traitCatalogs, catalog)
 }
 

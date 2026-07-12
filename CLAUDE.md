@@ -305,7 +305,12 @@ byte), matching LSP's exclusive range end. `toLSPRange` uses it directly.
     Returns nil for non-model files so the editor falls through to other
     providers (Intelephense, Psalm, etc.).
 
-18. **String-reference navigation** — `config('app.name')`, `view('users.index')`,
+18. **Query scopes** — `scopeActive()` methods (in models, parents, or traits)
+    are indexed into `ModelCatalog.Scopes`; `User::active()` with the cursor on
+    the method name jumps to the scope declaration. Scopes never appear in
+    `ByExposed`, so `$user->active` still warns.
+
+19. **String-reference navigation** — `config('app.name')`, `view('users.index')`,
     and `route('home')` support go-to-definition (cursor inside the string) and
     completion (triggered by `'` / `"` inside the helper call). The `strindex`
     package indexes `config/**/*.php` keys (dot notation, intermediate keys
@@ -313,7 +318,7 @@ byte), matching LSP's exclusive range end. `toLSPRange` uses it directly.
     calls in `routes/**/*.php`. The watcher also covers `config/` and
     `resources/views/`; changes there rebuild the string index in full (cheap).
 
-19. **`workspace/symbol`** — project-wide symbol search, unlike
+20. **`workspace/symbol`** — project-wide symbol search, unlike
     `documentSymbol` which is scoped to one open file. Searches every
     indexed Eloquent attribute (across all models) and every container
     binding (across all `ServiceProvider`s), filtered by a case-insensitive

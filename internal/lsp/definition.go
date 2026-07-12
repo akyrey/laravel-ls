@@ -131,11 +131,24 @@ func (v *defVisitor) VisitNew(n phpwalk.NewExprInfo) {
 }
 
 func (v *defVisitor) VisitStaticCall(n phpwalk.StaticCallInfo) {
-	if v.offset < n.ClassLocation.StartByte || v.offset >= n.ClassLocation.EndByte {
+	// Cursor on the class name → container lookup.
+	if v.offset >= n.ClassLocation.StartByte && v.offset < n.ClassLocation.EndByte {
+		v.appendContainerLocations(v.fc.Resolve(n.ClassName))
 		return
 	}
-	fqn := v.fc.Resolve(n.ClassName)
-	v.appendContainerLocations(fqn)
+	// Cursor on the method name → query-scope declaration
+	// (User::active() jumps to scopeActive()).
+	nameNode := n.Raw.ChildByFieldName("name")
+	if nameNode == nil || !cursorOnNode(v.offset, nameNode) {
+		return
+	}
+	cat := v.models.Lookup(v.fc.Resolve(n.ClassName))
+	if cat == nil {
+		return
+	}
+	if loc, ok := cat.Scopes[n.MethodName]; ok && !loc.Zero() {
+		v.locations = append(v.locations, toLSPLocation(loc, v.docs))
+	}
 }
 
 func (v *defVisitor) VisitInstanceOf(n phpwalk.InstanceOfInfo) {

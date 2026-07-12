@@ -91,7 +91,9 @@ class Scratch {
 	defer tree.Close()
 
 	attrs := extractMethods("test.php", raw, src, fc)
-	if a, ok := attrByMethod(attrs, "scopeEager"); ok {
+	// scopeEager is (correctly) extracted as a query scope; the point here is
+	// that with(Foo::class) must not make it a Relationship.
+	if a, ok := attrByMethod(attrs, "scopeEager"); ok && a.Kind != Scope {
 		t.Errorf("with(Foo::class) should not be classified as a Relationship, got %+v", a)
 	}
 }
@@ -206,5 +208,58 @@ class User extends Model {
 	}
 	if _, ok := found["casts"]; ok {
 		t.Error("the casts() method itself must not be exposed as an attribute")
+	}
+}
+
+func TestExtractMethods_QueryScope(t *testing.T) {
+	src := []byte(`<?php
+namespace App\Models;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Builder;
+class User extends Model {
+    public function scopeActive(Builder $query): Builder
+    {
+        return $query->where('active', true);
+    }
+    public function scopePopularThisWeek($query)
+    {
+        return $query->where('views', '>', 100);
+    }
+    public function scope()
+    {
+        return null; // bare "scope" is not a scope declaration
+    }
+}`)
+	raw, fc, tree := firstClassNode(t, src)
+	defer tree.Close()
+
+	attrs := extractMethods("/fake/User.php", raw, src, fc)
+
+	scopes := map[string]ModelAttribute{}
+	for _, a := range attrs {
+		if a.Kind == Scope {
+			scopes[a.ExposedName] = a
+		} else {
+			t.Errorf("unexpected non-scope attribute %q (kind %d)", a.ExposedName, a.Kind)
+		}
+	}
+	for name, method := range map[string]string{
+		"active":          "scopeActive",
+		"popularThisWeek": "scopePopularThisWeek",
+	} {
+		a, ok := scopes[name]
+		if !ok {
+			t.Errorf("scope %q not extracted; got %v", name, scopes)
+			continue
+		}
+		if a.MethodName != method {
+			t.Errorf("scope %q method = %q, want %q", name, a.MethodName, method)
+		}
+		if a.Location.Zero() {
+			t.Errorf("scope %q has zero location", name)
+		}
+	}
+	if _, ok := scopes["scope"]; ok {
+		t.Error("bare scope() method must not be indexed as a scope")
 	}
 }
