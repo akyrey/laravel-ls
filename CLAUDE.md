@@ -108,7 +108,7 @@ internal/
     idehelper/
       merge.go                  # _ide_helper_models.php stub parser
     strindex/
-      strindex.go               # config keys / view names / route names index
+      strindex.go               # config keys / views / route names / env keys index
   lsp/
     server.go                   # Server struct — owns all LSP state + handler methods
     definition.go               # textDocument/definition — container + Eloquent dispatch
@@ -320,12 +320,16 @@ byte), matching LSP's exclusive range end. `toLSPRange` uses it directly.
     `ByExposed`, so `$user->active` still warns.
 
 19. **String-reference navigation** — `config('app.name')`, `view('users.index')`,
-    and `route('home')` support go-to-definition (cursor inside the string) and
-    completion (triggered by `'` / `"` inside the helper call). The `strindex`
-    package indexes `config/**/*.php` keys (dot notation, intermediate keys
-    included), `resources/views/**/*.blade.php` names, and `->name('...')`
-    calls in `routes/**/*.php`. The watcher also covers `config/` and
-    `resources/views/`; changes there rebuild the string index in full (cheap).
+    `route('home')`, and `env('APP_KEY')` support go-to-definition (cursor
+    inside the string) and completion (triggered by `'` / `"` inside the
+    helper call). The `strindex` package indexes `config/**/*.php` keys (dot
+    notation, intermediate keys included), `resources/views/**/*.blade.php`
+    names, `->name('...')` calls in `routes/**/*.php`, and `KEY=` lines in
+    `.env` / `.env.example` (`.env` wins per key; `export` prefixes and
+    comments handled). The watcher also covers `config/`, `resources/views/`,
+    and the project root (for dotenv files); changes there rebuild the string
+    index in full (cheap), while `.env`-only changes skip the model/binding
+    reindex entirely.
 
 20. **`workspace/symbol`** — project-wide symbol search, unlike
     `documentSymbol` which is scoped to one open file. Searches every

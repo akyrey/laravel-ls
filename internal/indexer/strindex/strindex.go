@@ -1,12 +1,16 @@
 // Package strindex indexes Laravel's string-reference conventions: config
-// keys (config/*.php), view names (resources/views/**/*.blade.php), and
-// route names (->name('...') in routes/*.php). The LSP layer uses it to
-// resolve config('app.name'), view('users.index'), and route('home') calls.
+// keys (config/*.php), view names (resources/views/**/*.blade.php), route
+// names (->name('...') in routes/*.php), and environment keys (.env /
+// .env.example). The LSP layer uses it to resolve config('app.name'),
+// view('users.index'), route('home'), and env('APP_KEY') calls.
 package strindex
 
 import (
+	"bytes"
 	"io/fs"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	ts "github.com/tree-sitter/go-tree-sitter"
@@ -26,6 +30,9 @@ type Index struct {
 	Views map[string]phputil.Location
 	// Routes maps route names ("users.index") to the ->name(...) argument.
 	Routes map[string]phputil.Location
+	// Env maps environment keys ("APP_KEY") to their line in .env, falling
+	// back to .env.example for keys defined only there.
+	Env map[string]phputil.Location
 }
 
 // New returns an empty, ready-to-use index.
@@ -34,6 +41,7 @@ func New() *Index {
 		Config: make(map[string]phputil.Location),
 		Views:  make(map[string]phputil.Location),
 		Routes: make(map[string]phputil.Location),
+		Env:    make(map[string]phputil.Location),
 	}
 }
 
@@ -45,6 +53,7 @@ func Walk(root string) *Index {
 	idx.walkConfig(filepath.Join(root, "config"))
 	idx.walkViews(filepath.Join(root, "resources", "views"))
 	idx.walkRoutes(filepath.Join(root, "routes"))
+	idx.walkEnv(root)
 	return idx
 }
 
@@ -149,6 +158,50 @@ func (idx *Index) walkViews(dir string) {
 		idx.Views[name] = phputil.Location{Path: path, StartLine: 1, EndLine: 1}
 		return nil
 	})
+}
+
+// — env —
+
+// envLineRe matches `KEY=` at the start of a line, with an optional
+// `export ` prefix. Group 1 is the prefix (if any), group 2 the key.
+var envLineRe = regexp.MustCompile(`^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)=`)
+
+// walkEnv indexes .env and .env.example under root. .env.example is read
+// first so real .env entries win per key.
+func (idx *Index) walkEnv(root string) {
+	for _, name := range []string{".env.example", ".env"} {
+		path := filepath.Join(root, name)
+		src, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		collectEnvKeys(idx.Env, src, path)
+	}
+}
+
+// collectEnvKeys records every KEY=value line of a dotenv file, keyed by
+// name with the key token's exact byte range as the location.
+func collectEnvKeys(out map[string]phputil.Location, src []byte, path string) {
+	lineStart := 0
+	for lineNo := 1; lineStart <= len(src); lineNo++ {
+		lineEnd := len(src)
+		if i := bytes.IndexByte(src[lineStart:], '\n'); i >= 0 {
+			lineEnd = lineStart + i
+		}
+		line := src[lineStart:lineEnd]
+		if m := envLineRe.FindSubmatch(line); m != nil {
+			keyStart := lineStart + len(m[1])
+			key := string(m[2])
+			out[key] = phputil.Location{
+				Path:      path,
+				StartLine: lineNo,
+				EndLine:   lineNo,
+				StartByte: keyStart,
+				EndByte:   keyStart + len(key),
+			}
+		}
+		lineStart = lineEnd + 1
+	}
 }
 
 // — routes —

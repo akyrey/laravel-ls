@@ -416,6 +416,8 @@ func (s *Server) startWatcher(root string) {
 			return w.Add(path)
 		})
 	}
+	// The project root itself (non-recursive) for .env / .env.example writes.
+	_ = w.Add(root)
 
 	go s.watchLoop(w, root)
 }
@@ -441,7 +443,7 @@ func (s *Server) watchLoop(w *fsnotify.Watcher, root string) {
 					_ = w.Add(event.Name)
 				}
 			}
-			if strings.HasSuffix(event.Name, ".php") {
+			if strings.HasSuffix(event.Name, ".php") || isEnvFile(event.Name) {
 				changedPaths[event.Name] = true
 				if !timer.Stop() {
 					select {
@@ -484,6 +486,9 @@ func (s *Server) reindexFiles(root string, paths []string) {
 	newModels := models
 
 	for _, path := range paths {
+		if !strings.HasSuffix(path, ".php") {
+			continue // .env changes only affect the string index below
+		}
 		if nb, e := container.ReindexFile(path, newBindings); e != nil {
 			s.log.Errorf("laravel-lsp: container reindex %s: %v", path, e)
 		} else {
@@ -535,6 +540,9 @@ func strChanged(root string, paths []string) bool {
 		filepath.Join(root, "routes") + string(filepath.Separator),
 	}
 	for _, p := range paths {
+		if isEnvFile(p) {
+			return true
+		}
 		for _, prefix := range prefixes {
 			if strings.HasPrefix(p, prefix) {
 				return true
@@ -542,6 +550,12 @@ func strChanged(root string, paths []string) bool {
 		}
 	}
 	return false
+}
+
+// isEnvFile reports whether path is a dotenv file the string index reads.
+func isEnvFile(path string) bool {
+	base := filepath.Base(path)
+	return base == ".env" || base == ".env.example"
 }
 
 // detectRoot extracts the project root from InitializeParams.

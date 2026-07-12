@@ -102,3 +102,36 @@ func TestStringRefCompletions(t *testing.T) {
 		t.Errorf("expected no completions in unrelated call, got %v", items)
 	}
 }
+
+func TestFindDefinition_EnvKey(t *testing.T) {
+	root := writeStrRefFixture(t)
+	envPath := filepath.Join(root, ".env")
+	if err := os.WriteFile(envPath, []byte("APP_NAME=Demo\nAPP_KEY=base64:xyz\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	strs := strindex.Walk(root)
+
+	src := []byte(`<?php return ['key' => env('APP_KEY')];`)
+	offset := bytes.Index(src, []byte("APP_KEY")) + 2
+	locs := findDefinition(src, "/fake/config/app.php", offset, container.NewBindingIndex(), eloquent.NewModelIndex(), strs, newDocumentStore())
+	if len(locs) != 1 {
+		t.Fatalf("locations = %d, want 1", len(locs))
+	}
+	if got := URIToPath(locs[0].URI); got != envPath {
+		t.Errorf("jump target = %q, want %q", got, envPath)
+	}
+	if locs[0].Range.Start.Line != 1 {
+		t.Errorf("line = %d, want 1 (0-based second line)", locs[0].Range.Start.Line)
+	}
+
+	// Completion inside env('') offers the keys.
+	src2 := []byte(`<?php $x = env('');`)
+	items := stringRefCompletions(src2, bytes.IndexByte(src2, '\'')+1, strs)
+	labels := make([]string, 0, len(items))
+	for _, it := range items {
+		labels = append(labels, it.Label)
+	}
+	if len(labels) != 2 || labels[0] != "APP_KEY" || labels[1] != "APP_NAME" {
+		t.Errorf("env completions = %v, want [APP_KEY APP_NAME]", labels)
+	}
+}

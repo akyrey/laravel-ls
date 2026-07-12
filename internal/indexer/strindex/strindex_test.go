@@ -110,3 +110,66 @@ func TestWalk_MissingDirs(t *testing.T) {
 		t.Errorf("expected empty index, got %+v", idx)
 	}
 }
+
+func TestWalk_EnvKeys(t *testing.T) {
+	root := t.TempDir()
+	env := `APP_NAME=Demo
+# comment line
+APP_KEY=base64:xyz
+
+export MAIL_HOST=smtp.example.com
+INVALID LINE WITHOUT EQUALS
+9BAD_KEY=nope
+`
+	example := `APP_NAME=ExampleOnlyValue
+EXAMPLE_ONLY_KEY=
+`
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte(env), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env.example"), []byte(example), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	idx := strindex.Walk(root)
+
+	envPath := filepath.Join(root, ".env")
+	tests := []struct {
+		key      string
+		wantPath string
+		wantLine int
+	}{
+		{"APP_NAME", envPath, 1}, // present in both; .env wins
+		{"APP_KEY", envPath, 3},
+		{"MAIL_HOST", envPath, 5}, // export prefix stripped
+		{"EXAMPLE_ONLY_KEY", filepath.Join(root, ".env.example"), 2},
+	}
+	src, _ := os.ReadFile(envPath)
+	for _, tt := range tests {
+		loc, ok := idx.Env[tt.key]
+		if !ok {
+			t.Errorf("env key %q not indexed", tt.key)
+			continue
+		}
+		if loc.Path != tt.wantPath || loc.StartLine != tt.wantLine {
+			t.Errorf("%q at %s:%d, want %s:%d", tt.key, loc.Path, loc.StartLine, tt.wantPath, tt.wantLine)
+		}
+		if loc.Path == envPath {
+			if got := string(src[loc.StartByte:loc.EndByte]); got != tt.key {
+				t.Errorf("%q byte range covers %q", tt.key, got)
+			}
+		}
+	}
+	for _, bad := range []string{"INVALID", "9BAD_KEY", "#"} {
+		if _, ok := idx.Env[bad]; ok {
+			t.Errorf("malformed entry %q must not be indexed", bad)
+		}
+	}
+}
+
+func TestWalk_EnvMissingFiles(t *testing.T) {
+	idx := strindex.Walk(t.TempDir())
+	if len(idx.Env) != 0 {
+		t.Errorf("expected empty env index, got %v", idx.Env)
+	}
+}

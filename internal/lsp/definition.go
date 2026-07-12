@@ -191,6 +191,8 @@ func stringRefTargets(strs *strindex.Index, fnName string) map[string]phputil.Lo
 		return strs.Views
 	case "route":
 		return strs.Routes
+	case "env":
+		return strs.Env
 	}
 	return nil
 }

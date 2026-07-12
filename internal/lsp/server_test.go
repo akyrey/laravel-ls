@@ -323,3 +323,30 @@ func TestParseConfig_Diagnostics(t *testing.T) {
 		}
 	})
 }
+
+// Editing .env must refresh the string index through the incremental path,
+// without disturbing the model/binding indexes.
+func TestReindexFiles_EnvChangeRefreshesStringIndex(t *testing.T) {
+	root := t.TempDir()
+	envPath := filepath.Join(root, ".env")
+	writeFile(t, envPath, "APP_NAME=Demo\n")
+	writeFile(t, filepath.Join(root, "app", "Models", "User.php"), reindexUserModel)
+
+	s := newRootedTestServer(t, root)
+	s.reindex(root)
+
+	if _, ok := s.strIndex.Env["APP_NAME"]; !ok {
+		t.Fatal("APP_NAME missing after full reindex")
+	}
+
+	writeFile(t, envPath, "APP_NAME=Demo\nNEW_FLAG=1\n")
+	modelsBefore := s.models
+	s.reindexFiles(root, []string{envPath})
+
+	if _, ok := s.strIndex.Env["NEW_FLAG"]; !ok {
+		t.Error("NEW_FLAG missing after incremental .env reindex")
+	}
+	if s.models != modelsBefore {
+		t.Error("model index was rebuilt for a .env-only change")
+	}
+}
