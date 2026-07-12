@@ -257,10 +257,10 @@ func (s *Server) DidOpen(ctx *glsp.Context, p *protocol.DidOpenTextDocumentParam
 	src := []byte(p.TextDocument.Text)
 	s.docs.Set(p.TextDocument.URI, src)
 	s.mu.RLock()
-	models, opts := s.models, s.cfg.diagOptions()
+	models, strs, opts := s.models, s.strIndex, s.cfg.diagOptions()
 	s.mu.RUnlock()
 	path := URIToPath(p.TextDocument.URI)
-	publishDiagnostics(ctx, p.TextDocument.URI, src, path, models, opts)
+	publishDiagnostics(ctx, p.TextDocument.URI, src, path, models, strs, opts)
 	return nil
 }
 
@@ -272,10 +272,10 @@ func (s *Server) DidChange(ctx *glsp.Context, p *protocol.DidChangeTextDocumentP
 	}
 	s.docs.Set(p.TextDocument.URI, src)
 	s.mu.RLock()
-	models, opts := s.models, s.cfg.diagOptions()
+	models, strs, opts := s.models, s.strIndex, s.cfg.diagOptions()
 	s.mu.RUnlock()
 	path := URIToPath(p.TextDocument.URI)
-	publishDiagnostics(ctx, p.TextDocument.URI, src, path, models, opts)
+	publishDiagnostics(ctx, p.TextDocument.URI, src, path, models, strs, opts)
 	return nil
 }
 
@@ -303,7 +303,7 @@ func contentFromChanges(changes []any) []byte {
 func (s *Server) DidClose(ctx *glsp.Context, p *protocol.DidCloseTextDocumentParams) error {
 	s.docs.Delete(p.TextDocument.URI)
 	// Clear diagnostics so they don't linger after the file is closed.
-	publishDiagnostics(ctx, p.TextDocument.URI, nil, "", nil, defaultDiagOptions())
+	publishDiagnostics(ctx, p.TextDocument.URI, nil, "", nil, nil, defaultDiagOptions())
 	return nil
 }
 

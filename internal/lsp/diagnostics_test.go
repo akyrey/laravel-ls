@@ -26,7 +26,7 @@ class Ctrl {
         return $user->email_address;
     }
 }`)
-	diags := collectDiagnostics(src, "/fake/Ctrl.php", models, defaultDiagOptions())
+	diags := collectDiagnostics(src, "/fake/Ctrl.php", models, nil, defaultDiagOptions())
 	for _, d := range diags {
 		t.Errorf("unexpected diagnostic: %s", d.Message)
 	}
@@ -47,7 +47,7 @@ class Ctrl {
         return $user->totally_unknown_prop;
     }
 }`)
-	diags := collectDiagnostics(src, "/fake/Ctrl.php", models, defaultDiagOptions())
+	diags := collectDiagnostics(src, "/fake/Ctrl.php", models, nil, defaultDiagOptions())
 	if len(diags) == 0 {
 		t.Fatal("expected diagnostic for unknown prop, got none")
 	}
@@ -65,7 +65,7 @@ class Ctrl {
 func TestCollectDiagnostics_NilModels(t *testing.T) {
 	src := []byte(`<?php $x->prop;`)
 	// Should return nil without panic when models is nil.
-	diags := collectDiagnostics(src, "/fake.php", nil, defaultDiagOptions())
+	diags := collectDiagnostics(src, "/fake.php", nil, nil, defaultDiagOptions())
 	if diags != nil {
 		t.Errorf("expected nil with nil models, got %v", diags)
 	}
@@ -85,7 +85,7 @@ class Ctrl {
         $unknown->any_prop;
     }
 }`)
-	diags := collectDiagnostics(src, "/fake/Ctrl.php", models, defaultDiagOptions())
+	diags := collectDiagnostics(src, "/fake/Ctrl.php", models, nil, defaultDiagOptions())
 	if len(diags) != 0 {
 		t.Errorf("expected no diagnostics for unresolved var, got %d", len(diags))
 	}
@@ -108,7 +108,7 @@ class Ctrl {
         return $user->$attr;
     }
 }`)
-	diags := collectDiagnostics(src, "/fake/Ctrl.php", models, defaultDiagOptions())
+	diags := collectDiagnostics(src, "/fake/Ctrl.php", models, nil, defaultDiagOptions())
 	for _, d := range diags {
 		t.Errorf("unexpected diagnostic for dynamic fetch: %s", d.Message)
 	}
@@ -140,7 +140,7 @@ class Ctrl {
         $user->incrementing;
     }
 }`)
-	diags := collectDiagnostics(src, "/fake/Ctrl.php", models, defaultDiagOptions())
+	diags := collectDiagnostics(src, "/fake/Ctrl.php", models, nil, defaultDiagOptions())
 	for _, d := range diags {
 		t.Errorf("unexpected diagnostic for built-in attribute: %s", d.Message)
 	}
@@ -165,7 +165,7 @@ class User extends Model {
         return $this->attributes;
     }
 }`)
-	diags := collectDiagnostics(src, "/fake/User.php", models, defaultDiagOptions())
+	diags := collectDiagnostics(src, "/fake/User.php", models, nil, defaultDiagOptions())
 	for _, d := range diags {
 		t.Errorf("unexpected diagnostic for inherited Model property: %s", d.Message)
 	}
@@ -209,7 +209,7 @@ class Ctrl {
         $invoice->number;
     }
 }`)
-	diags := collectDiagnostics(src, "/fake/Ctrl.php", models, defaultDiagOptions())
+	diags := collectDiagnostics(src, "/fake/Ctrl.php", models, nil, defaultDiagOptions())
 	for _, d := range diags {
 		t.Errorf("unexpected diagnostic: %s", d.Message)
 	}
@@ -252,7 +252,7 @@ class Ctrl {
         $page->slug;
     }
 }`)
-	diags := collectDiagnostics(src, "/fake/Ctrl.php", models, defaultDiagOptions())
+	diags := collectDiagnostics(src, "/fake/Ctrl.php", models, nil, defaultDiagOptions())
 	for _, d := range diags {
 		t.Errorf("unexpected diagnostic: %s", d.Message)
 	}
@@ -275,7 +275,7 @@ class Ctrl {
 }`)
 
 	t.Run("default emits warning", func(t *testing.T) {
-		diags := collectDiagnostics(src, "/fake.php", models, defaultDiagOptions())
+		diags := collectDiagnostics(src, "/fake.php", models, nil, defaultDiagOptions())
 		if len(diags) != 1 {
 			t.Fatalf("diags = %d, want 1", len(diags))
 		}
@@ -287,7 +287,7 @@ class Ctrl {
 	t.Run("disabled emits nothing", func(t *testing.T) {
 		opts := defaultDiagOptions()
 		opts.enabled = false
-		if diags := collectDiagnostics(src, "/fake.php", models, opts); len(diags) != 0 {
+		if diags := collectDiagnostics(src, "/fake.php", models, nil, opts); len(diags) != 0 {
 			t.Errorf("diags = %d, want 0 when disabled", len(diags))
 		}
 	})
@@ -295,7 +295,7 @@ class Ctrl {
 	t.Run("severity override", func(t *testing.T) {
 		opts := defaultDiagOptions()
 		opts.severity = protocol.DiagnosticSeverityHint
-		diags := collectDiagnostics(src, "/fake.php", models, opts)
+		diags := collectDiagnostics(src, "/fake.php", models, nil, opts)
 		if len(diags) != 1 || *diags[0].Severity != protocol.DiagnosticSeverityHint {
 			t.Errorf("expected one hint diagnostic, got %v", diags)
 		}
@@ -304,7 +304,7 @@ class Ctrl {
 	t.Run("ignored property", func(t *testing.T) {
 		opts := defaultDiagOptions()
 		opts.ignore = map[string]bool{"legacy_column": true}
-		if diags := collectDiagnostics(src, "/fake.php", models, opts); len(diags) != 0 {
+		if diags := collectDiagnostics(src, "/fake.php", models, nil, opts); len(diags) != 0 {
 			t.Errorf("diags = %d, want 0 for ignored property", len(diags))
 		}
 	})

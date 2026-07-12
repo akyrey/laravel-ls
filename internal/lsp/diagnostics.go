@@ -7,6 +7,7 @@ import (
 	protocol "github.com/tliron/glsp/protocol_3_16"
 
 	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
+	"github.com/akyrey/laravel-lsp/internal/indexer/strindex"
 	"github.com/akyrey/laravel-lsp/internal/phpnode"
 	"github.com/akyrey/laravel-lsp/internal/phputil"
 	"github.com/akyrey/laravel-lsp/internal/phpwalk"
@@ -50,12 +51,13 @@ var builtinModelAttrs = map[string]bool{
 }
 
 // publishDiagnostics parses src and pushes a textDocument/publishDiagnostics
-// notification for any unrecognised Eloquent property accesses it finds.
-// Calling it with a nil models index clears existing diagnostics for the file.
-func publishDiagnostics(ctx *glsp.Context, uri protocol.DocumentUri, src []byte, path string, models *eloquent.ModelIndex, opts diagOptions) {
+// notification for any unrecognised Eloquent property accesses or Laravel
+// string references (config()/view()/route()/env()) it finds. Calling it
+// with nil indexes clears existing diagnostics for the file.
+func publishDiagnostics(ctx *glsp.Context, uri protocol.DocumentUri, src []byte, path string, models *eloquent.ModelIndex, strs *strindex.Index, opts diagOptions) {
 	diags := []protocol.Diagnostic{}
-	if models != nil && len(src) > 0 {
-		if collected := collectDiagnostics(src, path, models, opts); collected != nil {
+	if len(src) > 0 {
+		if collected := collectDiagnostics(src, path, models, strs, opts); collected != nil {
 			diags = collected
 		}
 	}
@@ -66,8 +68,10 @@ func publishDiagnostics(ctx *glsp.Context, uri protocol.DocumentUri, src []byte,
 }
 
 // collectDiagnostics returns Warning diagnostics for every $model->propName
-// access where propName is not found in the model's attribute catalog.
-func collectDiagnostics(src []byte, path string, models *eloquent.ModelIndex, opts diagOptions) []protocol.Diagnostic {
+// access where propName is not found in the model's attribute catalog, and
+// for every config()/view()/route()/env() call whose literal key is not
+// found in the string-reference index.
+func collectDiagnostics(src []byte, path string, models *eloquent.ModelIndex, strs *strindex.Index, opts diagOptions) []protocol.Diagnostic {
 	if !opts.enabled {
 		return nil
 	}
@@ -82,6 +86,7 @@ func collectDiagnostics(src []byte, path string, models *eloquent.ModelIndex, op
 		path:   path,
 		src:    src,
 		models: models,
+		strs:   strs,
 		opts:   opts,
 	}
 	phpwalk.Walk(path, src, tree, dv)
@@ -94,6 +99,7 @@ type diagVisitor struct {
 	path         string
 	src          []byte
 	models       *eloquent.ModelIndex
+	strs         *strindex.Index
 	opts         diagOptions
 	encClass     phputil.FQN
 	encMethod    *phpwalk.MethodInfo
@@ -117,7 +123,7 @@ func (v *diagVisitor) VisitClassMethod(n phpwalk.MethodInfo) {
 }
 
 func (v *diagVisitor) VisitPropertyFetch(n phpwalk.PropertyFetchInfo) {
-	if builtinModelAttrs[n.PropName] || v.opts.ignore[n.PropName] {
+	if v.models == nil || builtinModelAttrs[n.PropName] || v.opts.ignore[n.PropName] {
 		return
 	}
 	var params []phpwalk.ParamInfo
@@ -143,5 +149,37 @@ func (v *diagVisitor) VisitPropertyFetch(n phpwalk.PropertyFetchInfo) {
 		Severity: &sev,
 		Source:   &src,
 		Message:  fmt.Sprintf("unknown property '%s' on %s", n.PropName, modelFQN),
+	})
+}
+
+// VisitFunctionCall warns on config()/view()/route()/env() calls whose
+// literal first argument is not found in the string-reference index.
+// Non-literal arguments (interpolated strings, variables) are unknowable
+// statically and are silently skipped, matching the dynamic-property-fetch
+// policy for Eloquent diagnostics above.
+func (v *diagVisitor) VisitFunctionCall(n phpwalk.FunctionCallInfo) {
+	targets := stringRefTargets(v.strs, n.Name)
+	if targets == nil || len(n.Args) == 0 {
+		return
+	}
+	arg := n.Args[0]
+	if !phpwalk.IsStringLiteral(arg) {
+		return
+	}
+	key := phpwalk.StringValue(arg, n.Src)
+	if key == "" {
+		return
+	}
+	if _, known := targets[key]; known {
+		return
+	}
+
+	sev := v.opts.severity
+	src := diagSource
+	v.diags = append(v.diags, protocol.Diagnostic{
+		Range:    toLSPRange(phpnode.FromNode(v.path, arg), v.src),
+		Severity: &sev,
+		Source:   &src,
+		Message:  fmt.Sprintf("unknown %s '%s'", stringRefLabel[n.Name], key),
 	})
 }

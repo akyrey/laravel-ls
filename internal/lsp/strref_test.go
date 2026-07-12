@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/akyrey/laravel-lsp/internal/indexer/container"
@@ -134,4 +135,136 @@ func TestFindDefinition_EnvKey(t *testing.T) {
 	if len(labels) != 2 || labels[0] != "APP_KEY" || labels[1] != "APP_NAME" {
 		t.Errorf("env completions = %v, want [APP_KEY APP_NAME]", labels)
 	}
+}
+
+func TestStringRefHover(t *testing.T) {
+	root := writeStrRefFixture(t)
+	strs := strindex.Walk(root)
+	docs := newDocumentStore()
+
+	tests := []struct {
+		name    string
+		call    string
+		wantKey string
+		want    string
+	}{
+		{"config key", `config('app.name')`, "app.name", "config key"},
+		{"view name", `view('users.index')`, "users.index", "view"},
+		{"route name", `route('home')`, "home", "route"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := []byte("<?php\n$x = " + tt.call + ";\n")
+			offset := bytes.IndexByte(src, '\'') + 2
+
+			ref := identifyStringRef(src, "/fake/Ctrl.php", offset, strs)
+			if ref == nil || !ref.found {
+				t.Fatalf("identifyStringRef = %+v, want found ref", ref)
+			}
+			md := stringRefHoverMD(ref, root, docs)
+			if !strings.Contains(md, tt.wantKey) {
+				t.Errorf("hover missing key %q; got:\n%s", tt.wantKey, md)
+			}
+			if !strings.Contains(md, tt.want) {
+				t.Errorf("hover missing label %q; got:\n%s", tt.want, md)
+			}
+		})
+	}
+}
+
+func TestStringRefHover_EnvShowsValue(t *testing.T) {
+	root := writeStrRefFixture(t)
+	envPath := filepath.Join(root, ".env")
+	if err := os.WriteFile(envPath, []byte("APP_NAME=Demo\nAPP_KEY=base64:xyz\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	strs := strindex.Walk(root)
+	docs := newDocumentStore()
+
+	src := []byte(`<?php return ['key' => env('APP_KEY')];`)
+	offset := bytes.Index(src, []byte("APP_KEY")) + 2
+
+	ref := identifyStringRef(src, "/fake/config/app.php", offset, strs)
+	if ref == nil || !ref.found {
+		t.Fatalf("identifyStringRef = %+v, want found ref", ref)
+	}
+	md := stringRefHoverMD(ref, root, docs)
+	if !strings.Contains(md, "base64:xyz") {
+		t.Errorf("hover missing env value; got:\n%s", md)
+	}
+}
+
+func TestStringRefHover_UnknownKey(t *testing.T) {
+	root := writeStrRefFixture(t)
+	strs := strindex.Walk(root)
+	docs := newDocumentStore()
+
+	src := []byte(`<?php $x = config('app.missing');`)
+	offset := bytes.IndexByte(src, '\'') + 2
+
+	ref := identifyStringRef(src, "/fake.php", offset, strs)
+	if ref == nil {
+		t.Fatal("expected a stringRef even when unresolved")
+	}
+	if ref.found {
+		t.Fatal("expected found = false for unknown key")
+	}
+	if md := stringRefHoverMD(ref, root, docs); md != "" {
+		t.Errorf("expected empty hover for unknown key, got:\n%s", md)
+	}
+}
+
+func TestCollectDiagnostics_StringRefs(t *testing.T) {
+	root := writeStrRefFixture(t)
+	strs := strindex.Walk(root)
+
+	t.Run("known keys emit nothing", func(t *testing.T) {
+		src := []byte(`<?php
+$a = config('app.name');
+$b = view('users.index');
+$c = route('home');
+`)
+		diags := collectDiagnostics(src, "/fake/Ctrl.php", nil, strs, defaultDiagOptions())
+		for _, d := range diags {
+			t.Errorf("unexpected diagnostic: %s", d.Message)
+		}
+	})
+
+	t.Run("unknown keys are warned", func(t *testing.T) {
+		src := []byte(`<?php
+$a = config('app.missing');
+$b = view('missing.view');
+$c = route('missing.route');
+`)
+		diags := collectDiagnostics(src, "/fake/Ctrl.php", nil, strs, defaultDiagOptions())
+		want := []string{
+			"unknown config key 'app.missing'",
+			"unknown view 'missing.view'",
+			"unknown route 'missing.route'",
+		}
+		if len(diags) != len(want) {
+			t.Fatalf("diags = %d, want %d: %v", len(diags), len(want), diags)
+		}
+		for i, w := range want {
+			if diags[i].Message != w {
+				t.Errorf("diags[%d] = %q, want %q", i, diags[i].Message, w)
+			}
+		}
+	})
+
+	t.Run("dynamic argument is not flagged", func(t *testing.T) {
+		src := []byte(`<?php $key = 'app.name'; config($key);`)
+		diags := collectDiagnostics(src, "/fake.php", nil, strs, defaultDiagOptions())
+		for _, d := range diags {
+			t.Errorf("unexpected diagnostic for dynamic config() argument: %s", d.Message)
+		}
+	})
+
+	t.Run("nil string index emits nothing", func(t *testing.T) {
+		src := []byte(`<?php config('app.missing');`)
+		diags := collectDiagnostics(src, "/fake.php", nil, nil, defaultDiagOptions())
+		if diags != nil {
+			t.Errorf("expected nil diagnostics with nil strindex, got %v", diags)
+		}
+	})
 }

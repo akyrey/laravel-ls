@@ -244,7 +244,9 @@ always use the full `$`-prefixed string.
    cursor (`$user->posts->` completes the related model's attributes).
 
 8. **`textDocument/hover`** — shows attribute kind and model FQN for Eloquent
-   properties; shows bound concrete for container abstracts.
+   properties; shows bound concrete for container abstracts; shows the kind
+   and resolved file for `config()`/`view()`/`route()`/`env()` string
+   references (see item 19), plus the actual value for `env()`.
 
 9. **`_ide_helper_models.php` merge** — `@property` / `@method` doc-comment
    entries are merged into the model index (AST entries win on conflict).
@@ -283,7 +285,11 @@ hops (`$a->b->c->d`), not just one — verified by
     (`$model->$attr`), or for built-in Eloquent attributes every model has
     (`id`, `created_at`, `updated_at`, `deleted_at`, `pivot`, plus the base
     `Model` class's own PHP properties — see `builtinModelAttrs` in
-    internal/lsp/diagnostics.go).
+    internal/lsp/diagnostics.go). Also emits `Warning` for any
+    `config()`/`view()`/`route()`/`env()` call whose literal first argument
+    is not found in the `strindex` (see item 19); non-literal arguments are
+    unknowable statically and are silently skipped, same as `$model->$attr`.
+    Both diagnostic kinds share `opts.severity`; `opts.enabled` disables both.
 
 **tree-sitter EndByte convention**: `EndByte()` is exclusive (one past the last
 byte), matching LSP's exclusive range end. `toLSPRange` uses it directly.
@@ -321,15 +327,27 @@ byte), matching LSP's exclusive range end. `toLSPRange` uses it directly.
 
 19. **String-reference navigation** — `config('app.name')`, `view('users.index')`,
     `route('home')`, and `env('APP_KEY')` support go-to-definition (cursor
-    inside the string) and completion (triggered by `'` / `"` inside the
-    helper call). The `strindex` package indexes `config/**/*.php` keys (dot
-    notation, intermediate keys included), `resources/views/**/*.blade.php`
-    names, `->name('...')` calls in `routes/**/*.php`, and `KEY=` lines in
-    `.env` / `.env.example` (`.env` wins per key; `export` prefixes and
-    comments handled). The watcher also covers `config/`, `resources/views/`,
-    and the project root (for dotenv files); changes there rebuild the string
-    index in full (cheap), while `.env`-only changes skip the model/binding
-    reindex entirely.
+    inside the string), hover, completion (triggered by `'` / `"` inside the
+    helper call), and diagnostics for unresolved keys. The `strindex` package
+    indexes `config/**/*.php` keys (dot notation, intermediate keys included),
+    `resources/views/**/*.blade.php` names, `->name('...')` calls in
+    `routes/**/*.php`, and `KEY=` lines in `.env` / `.env.example` (`.env`
+    wins per key; `export` prefixes and comments handled). The watcher also
+    covers `config/`, `resources/views/`, and the project root (for dotenv
+    files); changes there rebuild the string index in full (cheap), while
+    `.env`-only changes skip the model/binding reindex entirely.
+    Hover renders the resolved key/name plus the file it's defined in
+    (relative to the project root); for `env()` it additionally reads the
+    actual value off the `.env`/`.env.example` line through the document
+    store, so unsaved edits to an open buffer are reflected. Diagnostics
+    warn on any of the four helpers called with a literal key that isn't in
+    the index (`internal/lsp/diagnostics.go`, `diagVisitor.VisitFunctionCall`);
+    the underlying visitor (`stringRefFinder` in `internal/lsp/hover.go`) is
+    intentionally a near-duplicate of `defVisitor.VisitFunctionCall`
+    (definition) and `stringRefVisitor` (completion) rather than a shared
+    abstraction — each LSP feature owns its own minimal visitor in this
+    codebase, and all three funnel through the single `stringRefTargets`
+    helper for the fnName → index-map lookup.
 
 20. **`workspace/symbol`** — project-wide symbol search, unlike
     `documentSymbol` which is scoped to one open file. Searches every

@@ -197,6 +197,15 @@ func stringRefTargets(strs *strindex.Index, fnName string) map[string]phputil.Lo
 	return nil
 }
 
+// stringRefLabel maps a helper function name to a human-readable label, used
+// in hover text and diagnostic messages.
+var stringRefLabel = map[string]string{
+	"config": "config key",
+	"view":   "view",
+	"route":  "route",
+	"env":    "env key",
+}
+
 func (v *defVisitor) VisitFunctionCall(n phpwalk.FunctionCallInfo) {
 	targets := stringRefTargets(v.strs, n.Name)
 	if targets == nil || len(n.Args) == 0 {
