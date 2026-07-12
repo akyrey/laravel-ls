@@ -57,23 +57,6 @@ func (idx *BindingIndex) Lookup(abstract phputil.FQN) []Binding {
 // Syms returns the retained symbol table, or nil if not built via Walk.
 func (idx *BindingIndex) Syms() *symbolTable { return idx.syms }
 
-// RemoveByFile removes all bindings whose Source.Path equals path.
-func (idx *BindingIndex) RemoveByFile(path string) {
-	for abstract, bindings := range idx.byAbstract {
-		filtered := bindings[:0]
-		for _, b := range bindings {
-			if b.Source.Path != path {
-				filtered = append(filtered, b)
-			}
-		}
-		if len(filtered) == 0 {
-			delete(idx.byAbstract, abstract)
-		} else {
-			idx.byAbstract[abstract] = filtered
-		}
-	}
-}
-
 // All returns every binding in the index, in unspecified order.
 func (idx *BindingIndex) All() []Binding {
 	var out []Binding

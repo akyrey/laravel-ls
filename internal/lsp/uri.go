@@ -69,7 +69,7 @@ func toLSPLocation(loc phputil.Location, docs *DocumentStore) protocol.Location 
 }
 
 // toLSPRange converts a phputil.Location to an LSP Range.
-// VKCOM parser EndPos is exclusive (one past the last byte), matching LSP's
+// tree-sitter's EndByte is exclusive (one past the last byte), matching LSP's
 // exclusive end convention. Reads src from disk when src is nil; on failure
 // the range collapses to the start.
 func toLSPRange(loc phputil.Location, src []byte) protocol.Range {

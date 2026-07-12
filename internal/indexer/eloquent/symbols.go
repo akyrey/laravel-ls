@@ -34,15 +34,14 @@ func (st *symbolTable) addClass(path string, fqn phputil.FQN, d *classDecl) {
 	st.byFile[path] = append(st.byFile[path], fqn)
 }
 
-// removeFile removes all class declarations contributed by path and re-resolves
-// the model set. Called before re-scanning a changed file.
+// removeFile removes all class declarations contributed by path. Callers must
+// invoke resolveModels afterwards (once, after any re-scan) to refresh the
+// model set.
 func (st *symbolTable) removeFile(path string) {
 	for _, fqn := range st.byFile[path] {
 		delete(st.classes, fqn)
 	}
 	delete(st.byFile, path)
-	st.models = make(map[phputil.FQN]struct{})
-	st.resolveModels()
 }
 
 // clone returns a shallow copy of st with independent maps (classDecl values are

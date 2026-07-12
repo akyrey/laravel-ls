@@ -27,6 +27,7 @@ func ReindexFile(path string, old *BindingIndex) (*BindingIndex, error) {
 	src, tree, err := phpnode.ParseFile(path)
 	if err != nil {
 		// File deleted or parse error — remove its entries, keep the rest.
+		newSyms.resolveServiceProviders()
 		newIdx := NewBindingIndex()
 		newIdx.syms = newSyms
 		for abstract, bindings := range old.byAbstract {

@@ -27,6 +27,7 @@ func ReindexFile(path string, old *ModelIndex) (*ModelIndex, error) {
 	src, tree, err := phpnode.ParseFile(path)
 	if err != nil {
 		// File deleted or parse error — remove its entries, keep the rest.
+		newSyms.resolveModels()
 		newIdx := NewModelIndex()
 		newIdx.syms = newSyms
 		carryOverExcept(newIdx, old, path)
@@ -95,9 +96,6 @@ func Walk(root string, dirs []string) (*ModelIndex, error) {
 				return nil
 			}
 			defer tree.Close()
-
-			sv := newScanVisitor(path, syms)
-			phpwalk.Walk(path, src, tree, sv)
 
 			models, traits := extractFileModels(path, src, tree, syms)
 			for _, catalog := range models {

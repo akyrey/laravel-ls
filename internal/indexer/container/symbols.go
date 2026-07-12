@@ -31,15 +31,14 @@ func (st *symbolTable) addClass(path string, fqn phputil.FQN, d *classDecl) {
 	st.byFile[path] = append(st.byFile[path], fqn)
 }
 
-// removeFile removes all class declarations contributed by path and re-resolves
-// the service provider set.
+// removeFile removes all class declarations contributed by path. Callers must
+// invoke resolveServiceProviders afterwards (once, after any re-scan) to
+// refresh the provider set.
 func (st *symbolTable) removeFile(path string) {
 	for _, fqn := range st.byFile[path] {
 		delete(st.classes, fqn)
 	}
 	delete(st.byFile, path)
-	st.serviceProviders = make(map[phputil.FQN]struct{})
-	st.resolveServiceProviders()
 }
 
 // clone returns a shallow copy of st with independent maps.

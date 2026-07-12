@@ -218,15 +218,6 @@ func (idx *ModelIndex) mergedView(fqn phputil.FQN, cat *ModelCatalog) *ModelCata
 // via Walk (e.g. constructed manually in tests).
 func (idx *ModelIndex) Syms() *symbolTable { return idx.syms }
 
-// RemoveByFile removes all catalogs whose source file is path.
-func (idx *ModelIndex) RemoveByFile(path string) {
-	for fqn, cat := range idx.byFQN {
-		if cat.Path == path {
-			delete(idx.byFQN, fqn)
-		}
-	}
-}
-
 // All returns every catalog in the index.
 func (idx *ModelIndex) All() []*ModelCatalog {
 	out := make([]*ModelCatalog, 0, len(idx.byFQN))

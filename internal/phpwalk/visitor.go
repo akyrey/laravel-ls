@@ -1,6 +1,5 @@
-// Package phpwalk provides a visitor-pattern walker over tree-sitter PHP CSTs.
-// It replaces the VKCOM visitor.Null + traverser pattern used throughout the
-// indexer and LSP packages.
+// Package phpwalk provides a visitor-pattern walker over tree-sitter PHP CSTs,
+// used throughout the indexer and LSP packages.
 //
 // Usage:
 //

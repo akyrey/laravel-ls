@@ -225,8 +225,6 @@ func collectDeclReplacements(
 		if err != nil {
 			continue
 		}
-		defer tree.Close()
-
 		mv := &declRenameVisitor{
 			path:    filePath,
 			src:     src,
@@ -234,6 +232,7 @@ func collectDeclReplacements(
 			newName: newName,
 		}
 		phpwalk.Walk(filePath, src, tree, mv)
+		tree.Close() // not deferred: this runs inside a loop
 		reps = append(reps, mv.replacements...)
 	}
 	return reps
