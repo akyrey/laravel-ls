@@ -6,7 +6,6 @@ package strindex
 
 import (
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -189,10 +188,4 @@ func (v *routeNameVisitor) VisitMethodCall(n phpwalk.MethodCallInfo) {
 		return
 	}
 	v.idx.Routes[name] = phpnode.FromNode(v.path, n.Args[0])
-}
-
-// Stat reports whether dir exists — exported for the LSP layer's watcher setup.
-func Stat(dir string) bool {
-	fi, err := os.Stat(dir)
-	return err == nil && fi.IsDir()
 }
