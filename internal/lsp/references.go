@@ -4,8 +4,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
@@ -222,8 +224,10 @@ func (v *symFinder) VisitClassConstFetch(n phpwalk.ClassConstFetchInfo) {
 
 // — Reference scanning —
 
-func scanReferences(root string, dirs []string, sym *refSymbol, docs *DocumentStore, models *eloquent.ModelIndex) []protocol.Location {
-	var locs []protocol.Location
+// listPHPFiles returns every .php file under the given dirs (relative to
+// root), in walk order. Missing dirs are skipped silently.
+func listPHPFiles(root string, dirs []string) []string {
+	var files []string
 	for _, dir := range dirs {
 		scanDir := filepath.Join(root, dir)
 		if _, err := os.Stat(scanDir); err != nil {
@@ -233,31 +237,65 @@ func scanReferences(root string, dirs []string, sym *refSymbol, docs *DocumentSt
 			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".php") {
 				return nil
 			}
-			src, err := docs.Read(PathToURI(path))
-			if err != nil {
-				return nil
-			}
-			tree, err := phpnode.ParseBytes(src)
-			if err != nil {
-				return nil
-			}
-			defer tree.Close()
-
-			rv := &refsVisitor{
-				fc:     &phputil.FileContext{Path: path, Uses: make(phputil.UseMap)},
-				sym:    sym,
-				path:   path,
-				src:    src,
-				models: models,
-			}
-			phpwalk.Walk(path, src, tree, rv)
-			for _, loc := range rv.locations {
-				locs = append(locs, toLSPLocation(loc, docs))
-			}
+			files = append(files, path)
 			return nil
 		})
 	}
-	return locs
+	return files
+}
+
+// scanFilesParallel runs fn over every file on up to GOMAXPROCS workers and
+// returns the per-file results flattened in file order, so output stays
+// deterministic regardless of scheduling. fn must be safe for concurrent use.
+func scanFilesParallel[T any](files []string, fn func(path string) []T) []T {
+	results := make([][]T, len(files))
+	sem := make(chan struct{}, runtime.GOMAXPROCS(0))
+	var wg sync.WaitGroup
+	for i, path := range files {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			results[i] = fn(path)
+		}()
+	}
+	wg.Wait()
+
+	var out []T
+	for _, r := range results {
+		out = append(out, r...)
+	}
+	return out
+}
+
+func scanReferences(root string, dirs []string, sym *refSymbol, docs *DocumentStore, models *eloquent.ModelIndex) []protocol.Location {
+	files := listPHPFiles(root, dirs)
+	return scanFilesParallel(files, func(path string) []protocol.Location {
+		src, err := docs.Read(PathToURI(path))
+		if err != nil {
+			return nil
+		}
+		tree, err := phpnode.ParseBytes(src)
+		if err != nil {
+			return nil
+		}
+		defer tree.Close()
+
+		rv := &refsVisitor{
+			fc:     &phputil.FileContext{Path: path, Uses: make(phputil.UseMap)},
+			sym:    sym,
+			path:   path,
+			src:    src,
+			models: models,
+		}
+		phpwalk.Walk(path, src, tree, rv)
+		var locs []protocol.Location
+		for _, loc := range rv.locations {
+			locs = append(locs, toLSPLocation(loc, docs))
+		}
+		return locs
+	})
 }
 
 func declarationLocations(sym *refSymbol, bindings *container.BindingIndex, models *eloquent.ModelIndex, docs *DocumentStore) []protocol.Location {

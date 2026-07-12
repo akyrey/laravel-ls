@@ -2,11 +2,7 @@ package lsp
 
 import (
 	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
 	"regexp"
-	"strings"
 
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
@@ -102,40 +98,29 @@ func scanRenameRefs(
 	models *eloquent.ModelIndex,
 	newName string,
 ) []textReplacement {
-	var reps []textReplacement
-	for _, dir := range dirs {
-		scanDir := filepath.Join(root, dir)
-		if _, err := os.Stat(scanDir); err != nil {
-			continue
-		}
-		_ = filepath.WalkDir(scanDir, func(path string, d fs.DirEntry, err error) error {
-			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".php") {
-				return nil
-			}
-			src, err := docs.Read(PathToURI(path))
-			if err != nil {
-				return nil
-			}
-			tree, parseErr := phpnode.ParseBytes(src)
-			if parseErr != nil {
-				return nil
-			}
-			defer tree.Close()
-
-			rv := &renameRefsVisitor{
-				fc:      &phputil.FileContext{Path: path, Uses: make(phputil.UseMap)},
-				sym:     sym,
-				path:    path,
-				src:     src,
-				models:  models,
-				newName: newName,
-			}
-			phpwalk.Walk(path, src, tree, rv)
-			reps = append(reps, rv.replacements...)
+	files := listPHPFiles(root, dirs)
+	return scanFilesParallel(files, func(path string) []textReplacement {
+		src, err := docs.Read(PathToURI(path))
+		if err != nil {
 			return nil
-		})
-	}
-	return reps
+		}
+		tree, parseErr := phpnode.ParseBytes(src)
+		if parseErr != nil {
+			return nil
+		}
+		defer tree.Close()
+
+		rv := &renameRefsVisitor{
+			fc:      &phputil.FileContext{Path: path, Uses: make(phputil.UseMap)},
+			sym:     sym,
+			path:    path,
+			src:     src,
+			models:  models,
+			newName: newName,
+		}
+		phpwalk.Walk(path, src, tree, rv)
+		return rv.replacements
+	})
 }
 
 type renameRefsVisitor struct {
