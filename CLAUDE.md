@@ -99,6 +99,8 @@ internal/
       walk.go                   # Walk() + ReindexFile()
     idehelper/
       merge.go                  # _ide_helper_models.php stub parser
+    strindex/
+      strindex.go               # config keys / view names / route names index
   lsp/
     server.go                   # Server struct — owns all LSP state + handler methods
     definition.go               # textDocument/definition — container + Eloquent dispatch
@@ -303,7 +305,15 @@ byte), matching LSP's exclusive range end. `toLSPRange` uses it directly.
     Returns nil for non-model files so the editor falls through to other
     providers (Intelephense, Psalm, etc.).
 
-18. **`workspace/symbol`** — project-wide symbol search, unlike
+18. **String-reference navigation** — `config('app.name')`, `view('users.index')`,
+    and `route('home')` support go-to-definition (cursor inside the string) and
+    completion (triggered by `'` / `"` inside the helper call). The `strindex`
+    package indexes `config/**/*.php` keys (dot notation, intermediate keys
+    included), `resources/views/**/*.blade.php` names, and `->name('...')`
+    calls in `routes/**/*.php`. The watcher also covers `config/` and
+    `resources/views/`; changes there rebuild the string index in full (cheap).
+
+19. **`workspace/symbol`** — project-wide symbol search, unlike
     `documentSymbol` which is scoped to one open file. Searches every
     indexed Eloquent attribute (across all models) and every container
     binding (across all `ServiceProvider`s), filtered by a case-insensitive

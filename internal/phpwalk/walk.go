@@ -73,6 +73,11 @@ func walkNode(path string, src []byte, n *ts.Node, v Visitor) {
 			v.VisitMethodCall(info)
 		}
 
+	case "function_call_expression":
+		if info, ok := buildFunctionCallInfo(path, src, n); ok {
+			v.VisitFunctionCall(info)
+		}
+
 	case "binary_expression":
 		// PHP's `instanceof` is a binary_expression with operator "instanceof".
 		if opNode := n.ChildByFieldName("operator"); opNode != nil && opNode.Kind() == "instanceof" {
@@ -463,6 +468,23 @@ func buildMethodCallInfo(path string, src []byte, n *ts.Node) (MethodCallInfo, b
 		Location:   phpnode.FromNode(path, n),
 		Raw:        n,
 		Src:        src,
+	}
+	if argsNode := n.ChildByFieldName("arguments"); argsNode != nil {
+		info.Args = extractArgExprs(src, argsNode)
+	}
+	return info, true
+}
+
+func buildFunctionCallInfo(path string, src []byte, n *ts.Node) (FunctionCallInfo, bool) {
+	fnNode := n.ChildByFieldName("function")
+	if fnNode == nil || fnNode.Kind() != "name" {
+		return FunctionCallInfo{}, false
+	}
+	info := FunctionCallInfo{
+		Name:     phpnode.NodeText(fnNode, src),
+		Location: phpnode.FromNode(path, n),
+		Raw:      n,
+		Src:      src,
 	}
 	if argsNode := n.ChildByFieldName("arguments"); argsNode != nil {
 		info.Args = extractArgExprs(src, argsNode)

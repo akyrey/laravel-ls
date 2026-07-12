@@ -38,3 +38,24 @@ func ClassConstFQN(n *ts.Node, src []byte, fc *phputil.FileContext) phputil.FQN 
 func UnwrapTypeName(n *ts.Node, src []byte) string {
 	return unwrapTypeName(src, n)
 }
+
+// StringValue extracts the unquoted content of a PHP string literal node.
+// tree-sitter-php represents 'email' as: string { ' string_content "email" ' }.
+// Returns "" when n is not a string node.
+func StringValue(n *ts.Node, src []byte) string {
+	if n == nil || n.Kind() != "string" {
+		return ""
+	}
+	for i := uint(0); i < n.ChildCount(); i++ {
+		child := n.Child(i)
+		if child.Kind() == "string_content" {
+			return phpnode.NodeText(child, src)
+		}
+	}
+	// Fallback: strip surrounding quote characters from the raw node text.
+	v := phpnode.NodeText(n, src)
+	if len(v) >= 2 && (v[0] == '\'' || v[0] == '"') {
+		return v[1 : len(v)-1]
+	}
+	return v
+}

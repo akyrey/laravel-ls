@@ -9,6 +9,7 @@ import (
 
 	"github.com/akyrey/laravel-lsp/internal/indexer/container"
 	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
+	"github.com/akyrey/laravel-lsp/internal/indexer/strindex"
 	"github.com/akyrey/laravel-lsp/internal/phpnode"
 	"github.com/akyrey/laravel-lsp/internal/phputil"
 	"github.com/akyrey/laravel-lsp/internal/phpwalk"
@@ -17,7 +18,7 @@ import (
 // Definition handles textDocument/definition requests.
 func (s *Server) Definition(_ *glsp.Context, p *protocol.DefinitionParams) (any, error) {
 	s.mu.RLock()
-	bindings, models := s.bindings, s.models
+	bindings, models, strs := s.bindings, s.models, s.strIndex
 	s.mu.RUnlock()
 	if bindings == nil || models == nil {
 		return nil, nil
@@ -30,7 +31,7 @@ func (s *Server) Definition(_ *glsp.Context, p *protocol.DefinitionParams) (any,
 
 	path := URIToPath(p.TextDocument.URI)
 	offset := positionToByteOffset(src, p.Position)
-	locs := findDefinition(src, path, offset, bindings, models, s.docs)
+	locs := findDefinition(src, path, offset, bindings, models, strs, s.docs)
 	if len(locs) == 0 {
 		return nil, nil
 	}
@@ -46,6 +47,7 @@ func findDefinition(
 	offset int,
 	bindings *container.BindingIndex,
 	models *eloquent.ModelIndex,
+	strs *strindex.Index,
 	docs *DocumentStore,
 ) []protocol.Location {
 	tree, err := phpnode.ParseBytes(src)
@@ -61,6 +63,7 @@ func findDefinition(
 		offset:   offset,
 		bindings: bindings,
 		models:   models,
+		strs:     strs,
 		docs:     docs,
 	}
 	phpwalk.Walk(path, src, tree, dv)
@@ -76,6 +79,7 @@ type defVisitor struct {
 	offset   int
 	bindings *container.BindingIndex
 	models   *eloquent.ModelIndex
+	strs     *strindex.Index
 	docs     *DocumentStore
 
 	encClass     phputil.FQN
@@ -157,6 +161,39 @@ func (v *defVisitor) VisitPropertyFetch(n phpwalk.PropertyFetchInfo) {
 		return
 	}
 	v.appendEloquentLocations(modelFQN, n.PropName)
+}
+
+// — Flow 3: Laravel string references —
+
+// stringRefTargets returns the strindex map matching a helper function name,
+// or nil for functions we don't resolve.
+func stringRefTargets(strs *strindex.Index, fnName string) map[string]phputil.Location {
+	if strs == nil {
+		return nil
+	}
+	switch fnName {
+	case "config":
+		return strs.Config
+	case "view":
+		return strs.Views
+	case "route":
+		return strs.Routes
+	}
+	return nil
+}
+
+func (v *defVisitor) VisitFunctionCall(n phpwalk.FunctionCallInfo) {
+	targets := stringRefTargets(v.strs, n.Name)
+	if targets == nil || len(n.Args) == 0 {
+		return
+	}
+	arg := n.Args[0]
+	if arg.Kind() != "string" || !cursorOnNode(v.offset, arg) {
+		return
+	}
+	if loc, ok := targets[phpwalk.StringValue(arg, n.Src)]; ok && !loc.Zero() {
+		v.locations = append(v.locations, toLSPLocation(loc, v.docs))
+	}
 }
 
 // — Location appenders —

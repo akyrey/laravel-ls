@@ -8,19 +8,18 @@ import (
 	protocol "github.com/tliron/glsp/protocol_3_16"
 
 	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
+	"github.com/akyrey/laravel-lsp/internal/indexer/strindex"
 	"github.com/akyrey/laravel-lsp/internal/phpnode"
 	"github.com/akyrey/laravel-lsp/internal/phputil"
 	"github.com/akyrey/laravel-lsp/internal/phpwalk"
 )
 
-// Completion handles textDocument/completion for Eloquent property access.
+// Completion handles textDocument/completion: Eloquent property access after
+// `->`, and Laravel string references inside config()/view()/route() calls.
 func (s *Server) Completion(_ *glsp.Context, p *protocol.CompletionParams) (any, error) {
 	s.mu.RLock()
-	models := s.models
+	models, strs := s.models, s.strIndex
 	s.mu.RUnlock()
-	if models == nil {
-		return nil, nil
-	}
 
 	src, err := s.docs.Read(p.TextDocument.URI)
 	if err != nil {
@@ -30,11 +29,70 @@ func (s *Server) Completion(_ *glsp.Context, p *protocol.CompletionParams) (any,
 	path := URIToPath(p.TextDocument.URI)
 	offset := positionToByteOffset(src, p.Position)
 
-	items := eloquentCompletions(src, path, offset, models)
+	var items []protocol.CompletionItem
+	if models != nil {
+		items = eloquentCompletions(src, path, offset, models)
+	}
+	if len(items) == 0 && strs != nil {
+		items = stringRefCompletions(src, offset, strs)
+	}
 	if len(items) == 0 {
 		return nil, nil
 	}
 	return items, nil
+}
+
+// stringRefCompletions offers config keys, view names, or route names when
+// the cursor sits inside the first string argument of the matching helper
+// call. The editor filters against what has been typed so far.
+func stringRefCompletions(src []byte, offset int, strs *strindex.Index) []protocol.CompletionItem {
+	tree, err := phpnode.ParseBytes(src)
+	if err != nil {
+		return nil
+	}
+	defer tree.Close()
+
+	v := &stringRefVisitor{offset: offset, strs: strs}
+	phpwalk.Walk("", src, tree, v)
+	if v.targets == nil {
+		return nil
+	}
+
+	kind := protocol.CompletionItemKindValue
+	items := make([]protocol.CompletionItem, 0, len(v.targets))
+	for name := range v.targets {
+		detail := v.fnName
+		items = append(items, protocol.CompletionItem{
+			Label:  name,
+			Kind:   &kind,
+			Detail: &detail,
+		})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Label < items[j].Label })
+	return items
+}
+
+// stringRefVisitor finds the innermost config/view/route call whose first
+// string argument contains the cursor.
+type stringRefVisitor struct {
+	phpwalk.NullVisitor
+	offset  int
+	strs    *strindex.Index
+	fnName  string
+	targets map[string]phputil.Location
+}
+
+func (v *stringRefVisitor) VisitFunctionCall(n phpwalk.FunctionCallInfo) {
+	targets := stringRefTargets(v.strs, n.Name)
+	if targets == nil || len(n.Args) == 0 {
+		return
+	}
+	arg := n.Args[0]
+	if arg.Kind() != "string" || !cursorOnNode(v.offset, arg) {
+		return
+	}
+	v.fnName = n.Name
+	v.targets = targets
 }
 
 // eloquentCompletions is the pure-function core of Completion. It resolves

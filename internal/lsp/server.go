@@ -17,6 +17,7 @@ import (
 	"github.com/akyrey/laravel-lsp/internal/indexer/container"
 	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
 	"github.com/akyrey/laravel-lsp/internal/indexer/idehelper"
+	"github.com/akyrey/laravel-lsp/internal/indexer/strindex"
 )
 
 // Config holds settings passed via initializationOptions in the LSP initialize
@@ -124,6 +125,7 @@ type Server struct {
 	scanOnce sync.Once
 	bindings *container.BindingIndex
 	models   *eloquent.ModelIndex
+	strIndex *strindex.Index
 }
 
 // NewServer creates a Server ready to accept LSP requests.
@@ -160,7 +162,9 @@ func (s *Server) Initialize(_ *glsp.Context, p *protocol.InitializeParams) (any,
 
 	syncKind := protocol.TextDocumentSyncKindFull
 	ver := s.version
-	triggerChars := []string{">"}
+	// ">" completes model attributes after ->; the quotes complete string
+	// references inside config('...') / view('...') / route('...') calls.
+	triggerChars := []string{">", "'", "\""}
 	return protocol.InitializeResult{
 		Capabilities: protocol.ServerCapabilities{
 			TextDocumentSync:   syncKind,
@@ -289,9 +293,10 @@ func (s *Server) reindex(root string) {
 	var wg sync.WaitGroup
 	var bindings *container.BindingIndex
 	var models *eloquent.ModelIndex
+	var strIdx *strindex.Index
 	var err1, err2 error
 
-	wg.Add(2)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		bindings, err1 = container.Walk(root, scanDirs)
@@ -299,6 +304,10 @@ func (s *Server) reindex(root string) {
 	go func() {
 		defer wg.Done()
 		models, err2 = eloquent.Walk(root, scanDirs)
+	}()
+	go func() {
+		defer wg.Done()
+		strIdx = strindex.Walk(root)
 	}()
 	wg.Wait()
 
@@ -324,6 +333,7 @@ func (s *Server) reindex(root string) {
 	if err2 == nil {
 		s.models = models
 	}
+	s.strIndex = strIdx
 	s.mu.Unlock()
 	s.log.Infof("laravel-lsp: indexing complete")
 	if models != nil {
@@ -341,8 +351,10 @@ func (s *Server) startWatcher(root string) {
 	s.mu.RUnlock()
 
 	// Watch the union of scan dirs and reference dirs so we catch changes
-	// everywhere the server reads from.
+	// everywhere the server reads from, plus the string-reference sources
+	// (config keys and blade views; routes are already in referenceDirs).
 	allPatterns := append(append([]string{}, cfg.ScanDirs...), cfg.ReferenceDirs...)
+	allPatterns = append(allPatterns, "config", filepath.Join("resources", "views"))
 	watchSet := expandDirs(root, allPatterns)
 
 	w, err := fsnotify.NewWatcher()
@@ -444,6 +456,16 @@ func (s *Server) reindexFiles(root string, paths []string) {
 		}
 	}
 
+	// Rebuild the string-reference index when any changed file lives in one
+	// of its source dirs. The full walk is cheap: a handful of config and
+	// route files plus a directory listing of the views.
+	if strChanged(root, paths) {
+		newStr := strindex.Walk(root)
+		s.mu.Lock()
+		s.strIndex = newStr
+		s.mu.Unlock()
+	}
+
 	// Re-apply ide-helper entries for the freshly extracted catalogs before
 	// publishing. Merge is idempotent, so carried-over catalogs (which still
 	// hold their entries from the previous merge) are left untouched.
@@ -461,6 +483,24 @@ func (s *Server) reindexFiles(root string, paths []string) {
 		s.mu.Unlock()
 	}
 	s.log.Infof("laravel-lsp: incremental reindex complete (%d files)", len(paths))
+}
+
+// strChanged reports whether any of paths lives under one of the
+// string-reference source directories.
+func strChanged(root string, paths []string) bool {
+	prefixes := []string{
+		filepath.Join(root, "config") + string(filepath.Separator),
+		filepath.Join(root, "resources", "views") + string(filepath.Separator),
+		filepath.Join(root, "routes") + string(filepath.Separator),
+	}
+	for _, p := range paths {
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(p, prefix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // detectRoot extracts the project root from InitializeParams.

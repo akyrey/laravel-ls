@@ -23,6 +23,7 @@ type collectingVisitor struct {
 	newExprs     []phpwalk.NewExprInfo
 	staticCalls  []phpwalk.StaticCallInfo
 	methodCalls  []phpwalk.MethodCallInfo
+	fnCalls      []phpwalk.FunctionCallInfo
 	assigns      []phpwalk.AssignInfo
 }
 
@@ -53,6 +54,9 @@ func (v *collectingVisitor) VisitMethodCall(n phpwalk.MethodCallInfo) {
 	v.methodCalls = append(v.methodCalls, n)
 }
 func (v *collectingVisitor) VisitAssign(n phpwalk.AssignInfo) { v.assigns = append(v.assigns, n) }
+func (v *collectingVisitor) VisitFunctionCall(n phpwalk.FunctionCallInfo) {
+	v.fnCalls = append(v.fnCalls, n)
+}
 
 const fixture = `<?php
 namespace App\Models;
@@ -397,5 +401,38 @@ trait Outer {
 	}
 	if got := v.traits[0].UsesTraits; len(got) != 1 || got[0] != "Inner" {
 		t.Errorf("trait UsesTraits = %v, want [Inner]", got)
+	}
+}
+
+func TestWalk_FunctionCall(t *testing.T) {
+	src := []byte(`<?php
+$a = config('app.name');
+$b = view('users.index', ['x' => 1]);
+$c = $callable('not collected');
+`)
+	tree, err := phpnode.ParseBytes(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer tree.Close()
+
+	v := &collectingVisitor{}
+	phpwalk.Walk("test.php", src, tree, v)
+
+	if len(v.fnCalls) != 2 {
+		names := make([]string, 0, len(v.fnCalls))
+		for _, f := range v.fnCalls {
+			names = append(names, f.Name)
+		}
+		t.Fatalf("expected 2 function calls (named only), got %d: %v", len(v.fnCalls), names)
+	}
+	if v.fnCalls[0].Name != "config" || v.fnCalls[1].Name != "view" {
+		t.Errorf("names = %q, %q; want config, view", v.fnCalls[0].Name, v.fnCalls[1].Name)
+	}
+	if len(v.fnCalls[0].Args) != 1 {
+		t.Fatalf("config args = %d, want 1", len(v.fnCalls[0].Args))
+	}
+	if got := phpwalk.StringValue(v.fnCalls[0].Args[0], src); got != "app.name" {
+		t.Errorf("first arg string value = %q, want app.name", got)
 	}
 }

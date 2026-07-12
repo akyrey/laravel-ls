@@ -32,7 +32,7 @@ func TestDefinition_ContainerLookup(t *testing.T) {
 	}
 	offset := idx // cursor on 'P'
 
-	locs := findDefinition(src, spPath, offset, bindings, models, newDocumentStore())
+	locs := findDefinition(src, spPath, offset, bindings, models, nil, newDocumentStore())
 	if len(locs) == 0 {
 		t.Fatal("expected at least one location, got none")
 	}
@@ -66,7 +66,7 @@ func TestDefinition_ContainerFromNew(t *testing.T) {
 	}
 	offset := idx + len("new ") // on 'P'
 
-	locs := findDefinition(src, ctrlPath, offset, bindings, models, newDocumentStore())
+	locs := findDefinition(src, ctrlPath, offset, bindings, models, nil, newDocumentStore())
 	if len(locs) == 0 {
 		t.Fatal("expected container location via new, got none")
 	}
@@ -98,7 +98,7 @@ func TestDefinition_ContainerFromInstanceOf(t *testing.T) {
 	}
 	offset := idx + len("instanceof ") // on 'P'
 
-	locs := findDefinition(src, ctrlPath, offset, bindings, models, newDocumentStore())
+	locs := findDefinition(src, ctrlPath, offset, bindings, models, nil, newDocumentStore())
 	if len(locs) == 0 {
 		t.Fatal("expected container location via instanceof, got none")
 	}
@@ -131,7 +131,7 @@ func TestDefinition_EloquentPropertyAccess(t *testing.T) {
 	// "'hi ' . $this->" is 15 bytes; cursor on first char of "email_address"
 	offset := idx + len("'hi ' . $this->")
 
-	locs := findDefinition(src, userPath, offset, bindings, models, newDocumentStore())
+	locs := findDefinition(src, userPath, offset, bindings, models, nil, newDocumentStore())
 	if len(locs) == 0 {
 		t.Fatal("expected at least one location, got none")
 	}
@@ -162,7 +162,7 @@ func TestDefinition_NilOnStringLiteral(t *testing.T) {
 	}
 	offset := idx + 1 // cursor on 'h' inside the string
 
-	locs := findDefinition(src, userPath, offset, bindings, models, newDocumentStore())
+	locs := findDefinition(src, userPath, offset, bindings, models, nil, newDocumentStore())
 	if len(locs) != 0 {
 		t.Errorf("expected no locations for string literal, got %d", len(locs))
 	}
@@ -190,7 +190,7 @@ func TestDefinition_EloquentFromStaticCall(t *testing.T) {
 	}
 	offset := idx + bytes.Index(needle, []byte("$user->email_address")) + len("$user->")
 
-	locs := findDefinition(src, ctrlPath, offset, bindings, models, newDocumentStore())
+	locs := findDefinition(src, ctrlPath, offset, bindings, models, nil, newDocumentStore())
 	if len(locs) == 0 {
 		t.Fatal("expected at least one location via User::find, got none")
 	}
@@ -222,7 +222,7 @@ func TestDefinition_EloquentFromNew(t *testing.T) {
 	}
 	offset := idx + bytes.Index(needle, []byte("$user->email_address")) + len("$user->")
 
-	locs := findDefinition(src, ctrlPath, offset, bindings, models, newDocumentStore())
+	locs := findDefinition(src, ctrlPath, offset, bindings, models, nil, newDocumentStore())
 	if len(locs) == 0 {
 		t.Fatal("expected at least one location via new User(), got none")
 	}
@@ -254,7 +254,7 @@ func TestDefinition_EloquentRelationship(t *testing.T) {
 	}
 	offset := idx + bytes.Index(needle, []byte("$user->posts")) + len("$user->")
 
-	locs := findDefinition(src, ctrlPath, offset, bindings, models, newDocumentStore())
+	locs := findDefinition(src, ctrlPath, offset, bindings, models, nil, newDocumentStore())
 	if len(locs) == 0 {
 		t.Fatal("expected location for relationship, got none")
 	}
@@ -286,7 +286,7 @@ func TestDefinition_EloquentChainedAccess(t *testing.T) {
 	}
 	offset := idx + len("$user->posts->") // on 's' of slug_url
 
-	locs := findDefinition(src, ctrlPath, offset, bindings, models, newDocumentStore())
+	locs := findDefinition(src, ctrlPath, offset, bindings, models, nil, newDocumentStore())
 	if len(locs) == 0 {
 		t.Fatal("expected location for chained property, got none")
 	}
@@ -319,7 +319,7 @@ func TestDefinition_EloquentUntypedRelationChainedAccess(t *testing.T) {
 	}
 	offset := idx + len("$post->author->")
 
-	locs := findDefinition(src, ctrlPath, offset, bindings, models, newDocumentStore())
+	locs := findDefinition(src, ctrlPath, offset, bindings, models, nil, newDocumentStore())
 	if len(locs) == 0 {
 		t.Fatal("expected location for chained property via untyped relation, got none")
 	}
@@ -333,7 +333,7 @@ func TestDefinition_NilWhenIndexesEmpty(t *testing.T) {
 	bindings := container.NewBindingIndex()
 	models := eloquent.NewModelIndex()
 	src := []byte("<?php $user->name;")
-	locs := findDefinition(src, "/fake.php", 10, bindings, models, newDocumentStore())
+	locs := findDefinition(src, "/fake.php", 10, bindings, models, nil, newDocumentStore())
 	if len(locs) != 0 {
 		t.Errorf("expected no locations with empty indexes, got %d", len(locs))
 	}

@@ -121,6 +121,17 @@ type MethodCallInfo struct {
 	Src        []byte
 }
 
+// FunctionCallInfo carries the pre-extracted fields of a
+// function_call_expression with a plain (named) callee, e.g. config(...).
+// Calls through variables or expressions are not reported.
+type FunctionCallInfo struct {
+	Name     string // callee name as written, e.g. "config"
+	Args     []*ts.Node
+	Location phputil.Location
+	Raw      *ts.Node
+	Src      []byte
+}
+
 // InstanceOfInfo carries the pre-extracted fields of an instanceof_expression.
 type InstanceOfInfo struct {
 	ClassName     string
@@ -160,6 +171,7 @@ type Visitor interface {
 	VisitNew(n NewExprInfo)
 	VisitStaticCall(n StaticCallInfo)
 	VisitMethodCall(n MethodCallInfo)
+	VisitFunctionCall(n FunctionCallInfo)
 	VisitInstanceOf(n InstanceOfInfo)
 	VisitAssign(n AssignInfo)
 }
@@ -180,5 +192,6 @@ func (NullVisitor) VisitClassConstFetch(ClassConstFetchInfo) {}
 func (NullVisitor) VisitNew(NewExprInfo)                     {}
 func (NullVisitor) VisitStaticCall(StaticCallInfo)           {}
 func (NullVisitor) VisitMethodCall(MethodCallInfo)           {}
+func (NullVisitor) VisitFunctionCall(FunctionCallInfo)       {}
 func (NullVisitor) VisitInstanceOf(InstanceOfInfo)           {}
 func (NullVisitor) VisitAssign(AssignInfo)                   {}

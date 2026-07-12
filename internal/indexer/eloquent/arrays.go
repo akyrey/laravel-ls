@@ -6,6 +6,7 @@ import (
 	ts "github.com/tree-sitter/go-tree-sitter"
 
 	"github.com/akyrey/laravel-lsp/internal/phpnode"
+	"github.com/akyrey/laravel-lsp/internal/phpwalk"
 )
 
 // ArrayPropKinds maps PHP property names to their AttributeKind.
@@ -144,18 +145,6 @@ func ArrayItemAtOffset(kind AttributeKind, valueNode *ts.Node, src []byte, offse
 }
 
 // stringValue extracts the unquoted content of a PHP string literal node.
-// tree-sitter-php represents 'email' as: string { ' string_content "email" ' }.
 func stringValue(n *ts.Node, src []byte) string {
-	for i := uint(0); i < n.ChildCount(); i++ {
-		child := n.Child(i)
-		if child.Kind() == "string_content" {
-			return phpnode.NodeText(child, src)
-		}
-	}
-	// Fallback: strip surrounding quote characters from the raw node text.
-	v := phpnode.NodeText(n, src)
-	if len(v) >= 2 && (v[0] == '\'' || v[0] == '"') {
-		return v[1 : len(v)-1]
-	}
-	return v
+	return phpwalk.StringValue(n, src)
 }
