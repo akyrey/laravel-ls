@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	protocol "github.com/tliron/glsp/protocol_3_16"
+
 	"github.com/akyrey/laravel-lsp/internal/indexer/container"
 	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
 )
@@ -255,5 +257,57 @@ func TestPrepareRename_DeclarationSites(t *testing.T) {
 				t.Errorf("token = %q, want %q", got, tt.wantToken)
 			}
 		})
+	}
+}
+
+func TestRename_RejectsInvalidNewName(t *testing.T) {
+	modelsRoot := filepath.Join("..", "..", "testdata", "models")
+	models, err := eloquent.Walk(modelsRoot, []string{"."})
+	if err != nil {
+		t.Fatalf("eloquent.Walk: %v", err)
+	}
+	s := newTestServer(container.NewBindingIndex(), models)
+	s.root = modelsRoot
+	s.cfg.ReferenceDirs = []string{"."}
+
+	userPath := filepath.Join(modelsRoot, "User.php")
+	src, err := os.ReadFile(userPath)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	s.docs.Set(PathToURI(userPath), src)
+
+	idx := bytes.Index(src, []byte("'hi ' . $this->email_address"))
+	if idx < 0 {
+		t.Fatal("needle not found in fixture")
+	}
+	offset := idx + len("'hi ' . $this->") + 2
+	line, col := byteOffsetToLineCol(src, offset)
+	params := func(newName string) *protocol.RenameParams {
+		return &protocol.RenameParams{
+			TextDocumentPositionParams: protocol.TextDocumentPositionParams{
+				TextDocument: protocol.TextDocumentIdentifier{URI: PathToURI(userPath)},
+				Position:     protocol.Position{Line: uint32(line), Character: uint32(col)},
+			},
+			NewName: newName,
+		}
+	}
+
+	for _, bad := range []string{"", "FooBar", "contact-email", "9lives", "contact email", "contact_émail"} {
+		edit, renameErr := s.Rename(nil, params(bad))
+		if renameErr == nil {
+			t.Errorf("Rename(%q): expected error, got nil (edit=%v)", bad, edit)
+		}
+		if edit != nil {
+			t.Errorf("Rename(%q): expected nil edit, got %v", bad, edit)
+		}
+	}
+
+	edit, renameErr := s.Rename(nil, params("contact_email"))
+	if renameErr != nil {
+		t.Fatalf("Rename(valid): unexpected error %v", renameErr)
+	}
+	if edit == nil {
+		t.Fatal("Rename(valid): expected a WorkspaceEdit, got nil")
 	}
 }

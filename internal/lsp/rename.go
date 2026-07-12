@@ -1,9 +1,11 @@
 package lsp
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/tliron/glsp"
@@ -41,6 +43,10 @@ func (s *Server) PrepareRename(_ *glsp.Context, p *protocol.PrepareRenameParams)
 	return rng, nil
 }
 
+// validPropertyNameRe matches a snake_case PHP identifier — the only form an
+// Eloquent exposed attribute name can take.
+var validPropertyNameRe = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
+
 // textReplacement pairs a source location with the replacement text.
 type textReplacement struct {
 	loc     phputil.Location
@@ -67,6 +73,14 @@ func (s *Server) Rename(_ *glsp.Context, p *protocol.RenameParams) (*protocol.Wo
 	sym := identifySymbol(src, path, offset, bindings, models)
 	if sym == nil || !sym.isEloquent() {
 		return nil, nil
+	}
+
+	// Exposed attribute names are snake_case; reference sites use the new
+	// name verbatim while declaration sites derive method names from it
+	// (Camel for modern accessors, Studly for legacy ones), so anything but
+	// a snake_case identifier would produce edits that no longer match.
+	if !validPropertyNameRe.MatchString(p.NewName) {
+		return nil, fmt.Errorf("invalid property name %q: use a snake_case identifier (e.g. contact_email)", p.NewName)
 	}
 
 	reps := scanRenameRefs(root, s.effectiveReferenceDirs(root), sym, s.docs, models, p.NewName)
