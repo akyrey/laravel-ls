@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/tliron/commonlog"
+	protocol "github.com/tliron/glsp/protocol_3_16"
 
 	"github.com/akyrey/laravel-lsp/internal/indexer/eloquent"
 )
@@ -215,4 +216,59 @@ func TestReindexFiles_KeepsIdeHelperEntries(t *testing.T) {
 
 	s.reindexFiles(root, []string{userPath})
 	assertNickname("after second incremental reindex")
+}
+
+func TestContentFromChanges(t *testing.T) {
+	rng := &protocol.Range{}
+	tests := []struct {
+		name    string
+		changes []any
+		want    string
+		wantNil bool
+	}{
+		{
+			name:    "whole event",
+			changes: []any{protocol.TextDocumentContentChangeEventWhole{Text: "full"}},
+			want:    "full",
+		},
+		{
+			name:    "plain event without range is whole-document",
+			changes: []any{protocol.TextDocumentContentChangeEvent{Text: "full"}},
+			want:    "full",
+		},
+		{
+			name: "incremental event must not clobber the cache",
+			changes: []any{
+				protocol.TextDocumentContentChangeEvent{Range: rng, Text: "fragment"},
+			},
+			wantNil: true,
+		},
+		{
+			name: "last whole change wins",
+			changes: []any{
+				protocol.TextDocumentContentChangeEventWhole{Text: "first"},
+				protocol.TextDocumentContentChangeEventWhole{Text: "second"},
+			},
+			want: "second",
+		},
+		{
+			name:    "empty",
+			changes: nil,
+			wantNil: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := contentFromChanges(tt.changes)
+			if tt.wantNil {
+				if got != nil {
+					t.Errorf("contentFromChanges = %q, want nil", got)
+				}
+				return
+			}
+			if string(got) != tt.want {
+				t.Errorf("contentFromChanges = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }

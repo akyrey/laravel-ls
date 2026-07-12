@@ -219,18 +219,9 @@ func (s *Server) DidOpen(ctx *glsp.Context, p *protocol.DidOpenTextDocumentParam
 	return nil
 }
 
-// DidChange updates the cached document and pushes diagnostics. Full sync: uses first change.
+// DidChange updates the cached document and pushes diagnostics.
 func (s *Server) DidChange(ctx *glsp.Context, p *protocol.DidChangeTextDocumentParams) error {
-	if len(p.ContentChanges) == 0 {
-		return nil
-	}
-	var src []byte
-	switch c := p.ContentChanges[0].(type) {
-	case protocol.TextDocumentContentChangeEventWhole:
-		src = []byte(c.Text)
-	case protocol.TextDocumentContentChangeEvent:
-		src = []byte(c.Text)
-	}
+	src := contentFromChanges(p.ContentChanges)
 	if src == nil {
 		return nil
 	}
@@ -241,6 +232,26 @@ func (s *Server) DidChange(ctx *glsp.Context, p *protocol.DidChangeTextDocumentP
 	path := URIToPath(p.TextDocument.URI)
 	publishDiagnostics(ctx, p.TextDocument.URI, src, path, models)
 	return nil
+}
+
+// contentFromChanges extracts the full new document content from a change
+// set. The server negotiates Full sync, so every change should be a whole-
+// document replacement; when several are present the last one wins. An event
+// carrying a Range is an incremental change this server cannot apply — it is
+// skipped rather than cached as if it were the whole document.
+func contentFromChanges(changes []any) []byte {
+	var src []byte
+	for _, ch := range changes {
+		switch c := ch.(type) {
+		case protocol.TextDocumentContentChangeEventWhole:
+			src = []byte(c.Text)
+		case protocol.TextDocumentContentChangeEvent:
+			if c.Range == nil {
+				src = []byte(c.Text)
+			}
+		}
+	}
+	return src
 }
 
 // DidClose removes the document from the cache and clears its diagnostics.
